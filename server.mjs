@@ -1,0 +1,511 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildArtifacts, seedRuntimeState, writeArtifacts } from './lib/dataset.mjs';
+import {
+  applyInspectionSave,
+  buildApplyPreview,
+  buildHints,
+  createAuditEntry,
+  getAppointmentById,
+  getDraftState,
+  getPatientById,
+  inferScreenId,
+  ingestTranscript,
+  markPreviewApplied,
+  previewCommand,
+  startSpeechSession,
+  stopSpeechSession,
+  searchPatients
+} from './lib/agent.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PORT = Number(process.env.PORT || 3030);
+const APP_DIR = path.join(__dirname, 'app');
+const EXTENSION_DIR = path.join(__dirname, 'extension');
+const GENERATED_DIR = path.join(__dirname, 'data/generated');
+const RUNTIME_PATH = path.join(__dirname, 'data/runtime/state.json');
+
+function loadLocalEnv() {
+  for (const envFile of ['.env.local', '.env']) {
+    const envPath = path.join(__dirname, envFile);
+    if (!fs.existsSync(envPath)) continue;
+    const content = fs.readFileSync(envPath, 'utf8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+      const [rawKey, ...rawValueParts] = trimmed.split('=');
+      const key = rawKey.trim();
+      const value = rawValueParts.join('=').trim().replace(/^["']|["']$/g, '');
+      if (key && !process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+loadLocalEnv();
+
+await writeArtifacts(GENERATED_DIR);
+const artifacts = buildArtifacts();
+const runtime = seedRuntimeState(artifacts);
+await persistRuntime();
+
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+  res.end(JSON.stringify(payload, null, 2));
+}
+
+function sendText(res, statusCode, payload, contentType = 'text/plain; charset=utf-8') {
+  res.writeHead(statusCode, {
+    'Content-Type': contentType,
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+  res.end(payload);
+}
+
+function notFound(res) {
+  sendJson(res, 404, { error: 'Not found' });
+}
+
+function contentTypeFor(filePath) {
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (filePath.endsWith('.js')) return 'application/javascript; charset=utf-8';
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.png')) return 'image/png';
+  return 'application/octet-stream';
+}
+
+async function serveStatic(res, baseDir, requestedPath) {
+  const normalized = requestedPath === '/' ? '/index.html' : requestedPath;
+  const filePath = path.normalize(path.join(baseDir, normalized));
+  if (!filePath.startsWith(baseDir)) {
+    return notFound(res);
+  }
+  try {
+    const content = await fsp.readFile(filePath);
+    sendText(res, 200, content, contentTypeFor(filePath));
+  } catch (error) {
+    notFound(res);
+  }
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', (chunk) => {
+      raw += chunk;
+    });
+    req.on('end', () => {
+      if (!raw) return resolve({});
+      try {
+        resolve(JSON.parse(raw));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function getCurrentDay(date) {
+  return runtime.scheduleDays.find((day) => day.date === date) || runtime.scheduleDays[0];
+}
+
+function serializeScheduleDay(day, statusFilter = 'all') {
+  const slots = day.slots.filter((slot) => {
+    if (statusFilter === 'completed') return slot.status === 'completed';
+    if (statusFilter === 'scheduled') return slot.status === 'scheduled';
+    return true;
+  }).map((slot) => ({
+    ...slot,
+    patient: getPatientById(runtime, slot.patient_id),
+    appointment: getAppointmentById(runtime, slot.appointment_id)
+  }));
+  return { ...day, slots };
+}
+
+async function persistRuntime() {
+  await fsp.mkdir(path.dirname(RUNTIME_PATH), { recursive: true });
+  await fsp.writeFile(RUNTIME_PATH, JSON.stringify(runtime, null, 2), 'utf8');
+}
+
+function addAudit(entry) {
+  runtime.auditEntries.unshift(entry);
+  if (runtime.auditEntries.length > 200) {
+    runtime.auditEntries.length = 200;
+  }
+}
+
+function getElevenLabsApiKey() {
+  return process.env.ELEVENLABS_API_KEY || process.env.SPEECH_TO_TEXT_API_KEY || '';
+}
+
+function resetAppointmentMedicalState(appointment, patient) {
+  appointment.patient_id = patient.patient_id;
+  appointment.status = 'scheduled';
+  appointment.executed_at = null;
+  appointment.inspection_draft = {
+    ...appointment.inspection_draft,
+    conclusion_text: '',
+    medical_record_sections: appointment.inspection_draft.medical_record_sections.map((section) => ({
+      ...section,
+      text: '',
+      options: (section.options || []).map((option) => ({ ...option, selected: false }))
+    })),
+    supplemental: {
+      ...appointment.inspection_draft.supplemental,
+      work_plan: '',
+      planned_sessions: '',
+      completed_sessions: '',
+      dynamics: '',
+      recommendations: ''
+    }
+  };
+  appointment.draft_state = {
+    appointment_id: appointment.appointment_id,
+    draft_status: 'idle',
+    transcript_chunks: [],
+    fact_candidates: [],
+    draft_patches: [],
+    applied_patch_ids: [],
+    updated_at: null,
+    last_preview: null
+  };
+}
+
+async function handleApi(req, res, url) {
+  if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
+    return sendJson(res, 200, {
+      app: {
+        name: 'Damumed Sandbox',
+        phase: 'phase-1-vertical-slice',
+        server_time: new Date().toISOString()
+      },
+      currentDate: runtime.currentDate,
+      providers: runtime.providers,
+      scheduleDay: serializeScheduleDay(getCurrentDay(runtime.currentDate)),
+      sourceOfTruth: {
+        generated_at: artifacts.generated_at,
+        screens: artifacts.screen_inventory,
+        fieldCount: artifacts.field_map.length,
+        locatorCount: artifacts.locator_registry.length,
+        usingFallbacks: artifacts.dataset_paths.usingFallbacks
+      }
+    });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/source-of-truth') {
+    return sendJson(res, 200, artifacts);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/schedule') {
+    const date = url.searchParams.get('date') || runtime.currentDate;
+    const statusFilter = url.searchParams.get('status') || 'all';
+    runtime.currentDate = date;
+    return sendJson(res, 200, serializeScheduleDay(getCurrentDay(date), statusFilter));
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/current-date') {
+    const body = await readBody(req);
+    runtime.currentDate = body.date || runtime.currentDate;
+    await persistRuntime();
+    return sendJson(res, 200, { currentDate: runtime.currentDate });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/patients/search') {
+    const q = url.searchParams.get('q') || '';
+    return sendJson(res, 200, { patients: searchPatients(runtime, q) });
+  }
+
+  if (req.method === 'GET' && /^\/api\/appointments\//.test(url.pathname)) {
+    const appointmentId = url.pathname.split('/')[3];
+    const appointment = getAppointmentById(runtime, appointmentId);
+    if (!appointment) return notFound(res);
+    return sendJson(res, 200, {
+      appointment,
+      patient: getPatientById(runtime, appointment.patient_id),
+      draftState: appointment.draft_state,
+      hints: buildHints(runtime, { screen_id: 'inspection', selected_appointment_id: appointmentId })
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/slots\//.test(url.pathname) && url.pathname.endsWith('/assign')) {
+    const slotId = url.pathname.split('/')[3];
+    const body = await readBody(req);
+    const targetDay = runtime.scheduleDays.find((day) => day.slots.some((slot) => slot.slot_id === slotId));
+    const slot = targetDay?.slots.find((item) => item.slot_id === slotId);
+    const patient = getPatientById(runtime, body.patient_id);
+    if (!slot || !patient) return notFound(res);
+    slot.patient_id = patient.patient_id;
+    const appointment = runtime.appointments[slot.appointment_id];
+    resetAppointmentMedicalState(appointment, patient);
+    appointment.readonly_tabs = {
+      ...appointment.readonly_tabs,
+      diaries: [{ id: 'diary-1', note: `${patient.full_name}: прием запланирован, форма ожидает заполнения.` }]
+    };
+    addAudit(createAuditEntry({
+      actorType: 'user',
+      actionType: 'assign_patient_to_slot',
+      screenId: 'schedule',
+      entityRefs: { slot_id: slot.slot_id, appointment_id: appointment.appointment_id, patient_id: patient.patient_id },
+      payload: body,
+      result: 'assigned'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { appointment, patient });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/speech/session/start') {
+    const body = await readBody(req);
+    const session = startSpeechSession(runtime, body.appointmentId, body.provider);
+    addAudit(createAuditEntry({
+      actorType: 'speech',
+      actionType: 'start_speech_session',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: body.appointmentId, session_id: session.session_id },
+      payload: body,
+      result: 'listening'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { session });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/speech/elevenlabs/token') {
+    const apiKey = getElevenLabsApiKey();
+    if (!apiKey) {
+      return sendJson(res, 400, {
+        ok: false,
+        provider: 'elevenlabs',
+        error: 'ELEVENLABS_API_KEY is not configured on the local backend.'
+      });
+    }
+
+    const tokenResponse = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey
+      }
+    });
+
+    if (!tokenResponse.ok) {
+      const details = await tokenResponse.text();
+      return sendJson(res, tokenResponse.status, {
+        ok: false,
+        provider: 'elevenlabs',
+        error: 'Failed to create ElevenLabs realtime token.',
+        details
+      });
+    }
+
+    const payload = await tokenResponse.json();
+    return sendJson(res, 200, {
+      ok: true,
+      provider: 'elevenlabs',
+      model: process.env.ELEVENLABS_STT_MODEL || 'scribe_v2_realtime',
+      ...payload
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/speech\/session\/[^/]+\/chunk$/.test(url.pathname)) {
+    const sessionId = url.pathname.split('/')[4];
+    const session = runtime.speechSessions[sessionId];
+    if (!session) return notFound(res);
+    const body = await readBody(req);
+    const transcript = await ingestTranscript(runtime, {
+      appointmentId: session.appointment_id,
+      sessionId,
+      text: body.text,
+      speakerTag: body.speakerTag
+    });
+    addAudit(createAuditEntry({
+      actorType: 'speech',
+      actionType: 'speech_chunk',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: session.appointment_id, session_id: sessionId },
+      payload: body,
+      result: transcript.factCandidates.length ? 'draft_updated' : 'logged_only'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, transcript);
+  }
+
+  if (req.method === 'POST' && /^\/api\/speech\/session\/[^/]+\/stop$/.test(url.pathname)) {
+    const sessionId = url.pathname.split('/')[4];
+    const session = stopSpeechSession(runtime, sessionId);
+    addAudit(createAuditEntry({
+      actorType: 'speech',
+      actionType: 'stop_speech_session',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: session.appointment_id, session_id: sessionId },
+      payload: {},
+      result: session.status
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { session, draftState: runtime.appointments[session.appointment_id].draft_state });
+  }
+
+  if (req.method === 'POST' && /^\/api\/appointments\//.test(url.pathname) && url.pathname.endsWith('/save')) {
+    const appointmentId = url.pathname.split('/')[3];
+    const body = await readBody(req);
+    const updated = applyInspectionSave(runtime, appointmentId, body);
+    addAudit(createAuditEntry({
+      actorType: 'ui',
+      actionType: 'save_record',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: appointmentId, patient_id: updated.patient_id },
+      payload: body,
+      result: 'completed'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { appointment: updated, patient: getPatientById(runtime, updated.patient_id) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/hints') {
+    const screenId = url.searchParams.get('screenId') || 'schedule';
+    const appointmentId = url.searchParams.get('appointmentId');
+    return sendJson(res, 200, {
+      hints: buildHints(runtime, { screen_id: screenId, selected_appointment_id: appointmentId })
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent/preview') {
+    const body = await readBody(req);
+    const preview = previewCommand({
+      command: body.command,
+      runtime,
+      screenContext: body.screenContext || {}
+    });
+    addAudit(createAuditEntry({
+      actorType: 'agent',
+      actionType: 'preview_command',
+      screenId: inferScreenId(body.screenContext || {}),
+      entityRefs: { appointment_id: body.screenContext?.selected_appointment_id || null },
+      payload: { command: body.command, screenContext: body.screenContext },
+      result: preview.intent.type
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, preview);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/transcripts/ingest') {
+    const body = await readBody(req);
+    const transcript = await ingestTranscript(runtime, {
+      appointmentId: body.appointmentId,
+      sessionId: body.sessionId,
+      text: body.text,
+      speakerTag: body.speakerTag
+    });
+    addAudit(createAuditEntry({
+      actorType: 'speech',
+      actionType: 'ingest_transcript_chunk',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: body.appointmentId },
+      payload: body,
+      result: transcript.factCandidates.length ? 'draft_candidates_created' : 'transcript_logged'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, transcript);
+  }
+
+  if (req.method === 'GET' && /^\/api\/drafts\//.test(url.pathname)) {
+    const appointmentId = url.pathname.split('/')[3];
+    const draftState = getDraftState(runtime, appointmentId);
+    return sendJson(res, 200, {
+      draftState,
+      preview: buildApplyPreview(runtime, appointmentId),
+      hints: buildHints(runtime, { screen_id: 'inspection', selected_appointment_id: appointmentId })
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/drafts\/[^/]+\/apply-preview$/.test(url.pathname)) {
+    const appointmentId = url.pathname.split('/')[3];
+    const preview = buildApplyPreview(runtime, appointmentId);
+    addAudit(createAuditEntry({
+      actorType: 'agent',
+      actionType: 'build_apply_preview',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: appointmentId },
+      payload: { patch_count: preview.patches.length },
+      result: 'preview_ready'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { preview, draftState: runtime.appointments[appointmentId].draft_state });
+  }
+
+  if (req.method === 'POST' && /^\/api\/drafts\/[^/]+\/mark-applied$/.test(url.pathname)) {
+    const appointmentId = url.pathname.split('/')[3];
+    const body = await readBody(req);
+    const draftState = markPreviewApplied(runtime, appointmentId, body.patchIds || []);
+    await persistRuntime();
+    return sendJson(res, 200, { draftState });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/audit') {
+    const body = await readBody(req);
+    addAudit(createAuditEntry({
+      actorType: body.actorType || 'extension',
+      actionType: body.actionType || 'unknown',
+      screenId: body.screenId || 'unknown',
+      entityRefs: body.entityRefs || {},
+      payload: body.payload || body,
+      result: body.result || 'logged'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/audit') {
+    return sendJson(res, 200, { auditEntries: runtime.auditEntries });
+  }
+
+  return notFound(res);
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      });
+      return res.end();
+    }
+
+    const url = new URL(req.url, `http://${req.headers.host}`);
+
+    if (url.pathname.startsWith('/api/')) {
+      return await handleApi(req, res, url);
+    }
+
+    if (url.pathname.startsWith('/extension/')) {
+      return serveStatic(res, EXTENSION_DIR, url.pathname.replace('/extension', '') || '/sidepanel.html');
+    }
+
+    if (url.pathname === '/' || url.pathname.startsWith('/app') || url.pathname === '/index.html') {
+      return serveStatic(res, APP_DIR, url.pathname === '/' ? '/index.html' : url.pathname.replace('/app', '') || '/index.html');
+    }
+
+    return serveStatic(res, APP_DIR, url.pathname);
+  } catch (error) {
+    console.error(error);
+    sendJson(res, 500, { error: 'Internal server error', details: error.message });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Damumed sandbox server running at http://localhost:${PORT}`);
+  console.log(`Extension files served at http://localhost:${PORT}/extension/sidepanel.html`);
+});

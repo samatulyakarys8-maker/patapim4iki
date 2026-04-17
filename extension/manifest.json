@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Damumed External Agent",
+  "version": "1.0.0",
+  "description": "External AI agent for the Damumed sandbox phase 1 demo",
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "audioCapture"],
+  "host_permissions": ["http://localhost:3030/*", "http://127.0.0.1:3030/*", "https://api.elevenlabs.io/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:3030 http://127.0.0.1:3030 https://api.elevenlabs.io wss://api.elevenlabs.io"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Damumed External Agent"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:3030/*", "http://127.0.0.1:3030/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

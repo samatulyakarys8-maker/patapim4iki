@@ -1,0 +1,197 @@
+[
+  {
+    "screen_id": "schedule",
+    "title": "Консультация и диагностика",
+    "source_path": "/Users/abdra/Downloads/Консультация и диагностика/КЃ≠бгЂмв†ж®п ® §®†£≠Ѓбв®™†.html",
+    "purpose": "Consultation workspace with schedule, patient search, queue, and appointment actions",
+    "visible_actions": [
+      {
+        "id": "button-1",
+        "label": "Мне все понятно, спасибо"
+      },
+      {
+        "id": "button-2",
+        "label": "Показать позже"
+      },
+      {
+        "id": "button-3",
+        "label": "Toggle navigation"
+      },
+      {
+        "id": "button-5",
+        "label": "Оперативные списки"
+      },
+      {
+        "id": "button-6",
+        "label": "Контакты"
+      },
+      {
+        "id": "button-15",
+        "label": "Показать"
+      },
+      {
+        "id": "button-25",
+        "label": "OK"
+      },
+      {
+        "id": "button-26",
+        "label": "Продолжить"
+      },
+      {
+        "id": "button-27",
+        "label": "Отмена"
+      },
+      {
+        "id": "button-28",
+        "label": "Продолжить"
+      },
+      {
+        "id": "button-29",
+        "label": "Отмена"
+      },
+      {
+        "id": "button-30",
+        "label": "Продолжить"
+      },
+      {
+        "id": "button-31",
+        "label": "Отмена"
+      },
+      {
+        "id": "button-38",
+        "label": "Служба поддержки"
+      },
+      {
+        "id": "button-39",
+        "label": "Печать"
+      },
+      {
+        "id": "button-40",
+        "label": "Закрыть"
+      },
+      {
+        "id": "button-41",
+        "label": "Применить"
+      },
+      {
+        "id": "button-42",
+        "label": "Отмена"
+      },
+      {
+        "id": "button-52",
+        "label": "Сохранить"
+      },
+      {
+        "id": "button-53",
+        "label": "Исполнить"
+      },
+      {
+        "id": "button-54",
+        "label": "Проверить"
+      },
+      {
+        "id": "button-55",
+        "label": "Есть ошибки"
+      },
+      {
+        "id": "button-56",
+        "label": "Отмена"
+      },
+      {
+        "id": "button-59",
+        "label": "ФИО/ИИН пациента"
+      },
+      {
+        "id": "button-61",
+        "label": "Применить"
+      },
+      {
+        "id": "button-62",
+        "label": "Отмена"
+      }
+    ],
+    "stable_ids": [
+      "btnAttachPersonAccept",
+      "btnPrevDay",
+      "btnNextDay",
+      "btnRefresh",
+      "schedule",
+      "cmbGridSchedules",
+      "dpCalendarDate",
+      "wndSearchAttachPerson",
+      "grdSearchAttachPerson",
+      "wndEditGridScheduleRecord",
+      "wndEditGridScheduleRecordExecute",
+      "wndGridScheduleRecordCancel",
+      "wndGridScheduleRecordInfo"
+    ]
+  },
+  {
+    "screen_id": "inspection",
+    "title": "РАХМЕТОЛЛА АЙКҮНІМ ХАБИДОЛЛАҚЫЗЫ - Dmed.Стационар",
+    "source_path": "/Users/abdra/Downloads/Консультация и диагностика/РАХМЕТОЛЛА АЙЫ - Dmed.Св†ж®Ѓ≠†а.html",
+    "purpose": "Patient assignment and inspection form with save actions and medical record editor",
+    "visible_actions": [
+      {
+        "id": "button-3",
+        "label": "Сохранить и закрыть"
+      },
+      {
+        "id": "button-4",
+        "label": "Сохранить"
+      },
+      {
+        "id": "button-8",
+        "label": "Сохранить"
+      },
+      {
+        "id": "button-14",
+        "label": "Сохранить"
+      }
+    ],
+    "tabs": [
+      {
+        "id": "i-inspectionresult",
+        "label": "Назначение"
+      },
+      {
+        "id": "i-mh-assignments",
+        "label": "Назначения"
+      },
+      {
+        "id": "i-mh-medicalrecords",
+        "label": "Медицинские записи"
+      },
+      {
+        "id": "i-mh-healthIndicators",
+        "label": "Показатель здоровья пациента"
+      },
+      {
+        "id": "i-mh-diaries",
+        "label": "Дневниковые записи"
+      },
+      {
+        "id": "i-mh-diagnosis",
+        "label": "Диагнозы"
+      },
+      {
+        "id": "i-par-files",
+        "label": "Файлы"
+      }
+    ],
+    "stable_ids": [
+      "frmInspectionResult",
+      "dtpServiceExecuteDate",
+      "dtpServiceExecuteTime",
+      "ntbDurationMinute",
+      "cmbMedicalEquipment",
+      "cmbExecuteMedicalPost",
+      "cmbMedicalForm",
+      "cmbPerformerService",
+      "cmbPerformerServiceMo",
+      "tbMedicalFinal",
+      "btnSaveAndCloseInspectionResult",
+      "btnSaveInspectionResult"
+    ]
+  }
+]

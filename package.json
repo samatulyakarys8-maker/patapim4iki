@@ -1,0 +1,23 @@
+{
+  "name": "damumed",
+  "version": "1.0.0",
+  "description": "Dataset-first Damumed sandbox with external Chrome extension agent",
+  "main": "server.mjs",
+  "scripts": {
+    "generate:artifacts": "node scripts/generate-artifacts.mjs",
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node scripts/smoke-test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  }
+}

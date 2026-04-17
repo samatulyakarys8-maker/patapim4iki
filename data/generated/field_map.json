@@ -1,0 +1,134 @@
+[
+  {
+    "screen_id": "inspection",
+    "field_key": "dtpserviceexecutetime",
+    "label": "Дата и время выполнения",
+    "dom_id": "dtpServiceExecuteTime",
+    "name": "dtpServiceExecuteTime",
+    "widget_type": "time",
+    "value_type": "time",
+    "required": true,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "ntbdurationminute",
+    "label": "Длительность в минутах",
+    "dom_id": "ntbDurationMinute",
+    "name": "ntbDurationMinute",
+    "widget_type": "numeric",
+    "value_type": "number",
+    "required": true,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "cmbmedicalequipment",
+    "label": "Медицинское оборудование",
+    "dom_id": "cmbMedicalEquipment",
+    "name": "cmbMedicalEquipment",
+    "widget_type": "combobox",
+    "value_type": "string",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "cmbexecutemedicalpost",
+    "label": "Медицинский пост",
+    "dom_id": "cmbExecuteMedicalPost",
+    "name": "cmbExecuteMedicalPost",
+    "widget_type": "combobox",
+    "value_type": "string",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "cbsearchacrossorg",
+    "label": "Искать по всей организации",
+    "dom_id": "cbSearchAcrossOrg",
+    "name": "cbSearchAcrossOrg",
+    "widget_type": "checkbox",
+    "value_type": "string",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "cmbmedicalform",
+    "label": "Форма",
+    "dom_id": "cmbMedicalForm",
+    "name": "cmbMedicalForm",
+    "widget_type": "combobox",
+    "value_type": "string",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "cmbperformerservice",
+    "label": "Услуга классификатора",
+    "dom_id": "cmbPerformerService",
+    "name": "cmbPerformerService",
+    "widget_type": "combobox",
+    "value_type": "string",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "cmbperformerservicemo",
+    "label": "Услуга из прейскуранта",
+    "dom_id": "cmbPerformerServiceMo",
+    "name": "cmbPerformerServiceMo",
+    "widget_type": "combobox",
+    "value_type": "string",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "tbmedicalfinal",
+    "label": "Заключение",
+    "dom_id": "tbMedicalFinal",
+    "name": "tbMedicalFinal",
+    "widget_type": "textarea",
+    "value_type": "text",
+    "required": true,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "dttitlereportbegindate",
+    "label": "С какого числа",
+    "dom_id": "dtTitleReportBeginDate",
+    "name": "dtTitleReportBeginDate",
+    "widget_type": "date",
+    "value_type": "date",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "dttitlereportenddate",
+    "label": "По какое число",
+    "dom_id": "dtTitleReportEndDate",
+    "name": "dtTitleReportEndDate",
+    "widget_type": "date",
+    "value_type": "date",
+    "required": false,
+    "source": "patient_html"
+  },
+  {
+    "screen_id": "inspection",
+    "field_key": "dtpserviceexecutedate",
+    "label": "Дата выполнения",
+    "dom_id": "dtpServiceExecuteDate",
+    "name": "dtpServiceExecuteDate",
+    "widget_type": "date",
+    "value_type": "date",
+    "required": true,
+    "source": "patient_html"
+  }
+]

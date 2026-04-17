@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Damumed Agent</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <section class="block">
+        <h1>Damumed Agent</h1>
+        <p>Работает только поверх песочницы на `http://localhost:3030`.</p>
+        <div id="globalStatus" class="status-note">Готово к работе. Сначала откройте форму назначения в песочнице.</div>
+        <button id="refreshContext" class="button">Определить экран</button>
+        <pre id="screenContext" class="code"></pre>
+      </section>
+
+      <section class="block">
+        <h2>Транскрипт и запись</h2>
+        <p class="hint">Форма остаётся пустой, пока вы не примените черновик. Во время записи extension использует realtime STT и собирает черновик отдельно от DOM.</p>
+        <div class="row wrap">
+          <button id="startRecording" class="button" type="button">Начать запись</button>
+          <button id="stopRecording" class="ghost-button" type="button" disabled>Остановить запись</button>
+          <button id="loadDraft" class="secondary-button" type="button">Обновить черновик</button>
+        </div>
+        <div id="recordingState" class="status-note">Запись не запущена.</div>
+        <select id="speakerTag">
+          <option value="auto">Определить автоматически</option>
+          <option value="doctor">Врач</option>
+          <option value="caregiver">Родитель / сопровождающий</option>
+          <option value="patient">Пациент</option>
+          <option value="unknown">Неизвестно</option>
+        </select>
+        <textarea id="transcriptInput" placeholder="Если микрофон недоступен, вставьте сюда готовый транскрипт приема."></textarea>
+        <div class="examples">
+          <button id="exampleDoctor" class="ghost-button" type="button">Пример врача</button>
+          <button id="exampleCaregiver" class="ghost-button" type="button">Пример родителя</button>
+        </div>
+        <div class="row wrap">
+          <button id="ingestTranscript" class="secondary-button" type="button">Вставить транскрипт</button>
+        </div>
+        <pre id="transcriptOutput" class="code"></pre>
+      </section>
+
+      <section class="block">
+        <h2>Черновик формы</h2>
+        <div class="row wrap">
+          <button id="applyPreview" class="button" type="button">Применить в форму</button>
+          <button id="saveInspection" class="ghost-button" type="button">Сохранить</button>
+          <button id="saveCloseInspection" class="secondary-button" type="button">Сохранить и закрыть</button>
+        </div>
+        <pre id="draftOutput" class="code"></pre>
+        <pre id="actionOutput" class="code"></pre>
+      </section>
+    </main>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+.env
+.env.local
+node_modules/
+data/runtime/
+test-results/
+.DS_Store
+/damumed
+/damumed.pub
+*.pem
+id_*
+*.key

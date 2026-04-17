@@ -1,0 +1,82 @@
+[
+  {
+    "artifact_id": "consultation-html",
+    "source_archive": "/Users/abdra/Downloads/Консультация и диагностика",
+    "artifact_type": "html",
+    "original_path": "/Users/abdra/Downloads/Консультация и диагностика/КЃ≠бгЂмв†ж®п ® §®†£≠Ѓбв®™†.html",
+    "normalized_name": "КЃ≠бгЂмв†ж®п ® §®†£≠Ѓбв®™†.html",
+    "patient_scope": "schedule",
+    "screen_scope": "consultation",
+    "notes": "Primary consultation and diagnostics screen"
+  },
+  {
+    "artifact_id": "patient-inspection-html",
+    "source_archive": "/Users/abdra/Downloads/Консультация и диагностика",
+    "artifact_type": "html",
+    "original_path": "/Users/abdra/Downloads/Консультация и диагностика/РАХМЕТОЛЛА АЙЫ - Dmed.Св†ж®Ѓ≠†а.html",
+    "normalized_name": "РАХМЕТОЛЛА АЙЫ - Dmed.Св†ж®Ѓ≠†а.html",
+    "patient_scope": "patient",
+    "screen_scope": "inspection",
+    "notes": "Primary patient inspection / assignment screen"
+  },
+  {
+    "artifact_id": "history-1",
+    "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+    "artifact_type": "pdf",
+    "original_path": "�?а�?а�?ои�?�?ин �?м�?е �?�?С.pdf",
+    "normalized_name": "�?а�?а�?ои�?�?ин �?м�?е �?�?С.pdf",
+    "patient_scope": "history",
+    "screen_scope": "history",
+    "notes": "History item discovered from zip archive listing"
+  },
+  {
+    "artifact_id": "history-2",
+    "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+    "artifact_type": "pdf",
+    "original_path": "�?аза�?�?ан �?и�?а�?  �?�?�?изм.pdf",
+    "normalized_name": "�?аза�?�?ан �?и�?а�?  �?�?�?изм.pdf",
+    "patient_scope": "history",
+    "screen_scope": "history",
+    "notes": "History item discovered from zip archive listing"
+  },
+  {
+    "artifact_id": "history-3",
+    "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+    "artifact_type": "pdf",
+    "original_path": "Тем�?�?баи�? �?и�?ба�? �?�?�?ма.pdf",
+    "normalized_name": "Тем�?�?баи�? �?и�?ба�? �?�?�?ма.pdf",
+    "patient_scope": "history",
+    "screen_scope": "history",
+    "notes": "History item discovered from zip archive listing"
+  },
+  {
+    "artifact_id": "history-4",
+    "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+    "artifact_type": "pdf",
+    "original_path": "�?ұ�?бөлекұл�? �?ұ�?�?ли   Це�?еб�?ал�?н�?и�? па�?али�?.pdf",
+    "normalized_name": "�?ұ�?бөлекұл�? �?ұ�?�?ли   Це�?еб�?ал�?н�?и�? па�?али�?.pdf",
+    "patient_scope": "history",
+    "screen_scope": "history",
+    "notes": "History item discovered from zip archive listing"
+  },
+  {
+    "artifact_id": "history-5",
+    "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+    "artifact_type": "pdf",
+    "original_path": "�?�?меди�?�? �?ңк�?�?   �?�?�?.pdf",
+    "normalized_name": "�?�?меди�?�? �?ңк�?�?   �?�?�?.pdf",
+    "patient_scope": "history",
+    "screen_scope": "history",
+    "notes": "History item discovered from zip archive listing"
+  },
+  {
+    "artifact_id": "history-6",
+    "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+    "artifact_type": "pdf",
+    "original_path": "�?баи�? �?мина  �?�?он�?и�?.pdf",
+    "normalized_name": "�?баи�? �?мина  �?�?он�?и�?.pdf",
+    "patient_scope": "history",
+    "screen_scope": "history",
+    "notes": "History item discovered from zip archive listing"
+  }
+]

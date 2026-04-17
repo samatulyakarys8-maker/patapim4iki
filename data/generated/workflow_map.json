@@ -1,0 +1,32 @@
+[
+  {
+    "workflow_id": "schedule-to-completed",
+    "title": "Schedule to completed inspection",
+    "steps": [
+      "Open schedule dashboard",
+      "Change day within 9-day range",
+      "Choose schedule/provider",
+      "Open attached patient selector",
+      "Select patient and create appointment",
+      "Open acceptance/execution window",
+      "Navigate to inspection form",
+      "Preview AI draft patches",
+      "Apply granular field updates",
+      "Save inspection and close",
+      "See status updated to Выполнено in schedule"
+    ]
+  },
+  {
+    "workflow_id": "live-listening-safe-mode",
+    "title": "Transcript to draft patch preview",
+    "steps": [
+      "Ingest transcript chunk",
+      "Optionally tag speaker role",
+      "Extract candidate facts",
+      "Generate draft field patches",
+      "Show preview in extension side panel",
+      "Apply approved patches through DOM engine",
+      "Write audit entry"
+    ]
+  }
+]

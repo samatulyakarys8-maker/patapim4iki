@@ -1,0 +1,22 @@
+{
+  "entities": [
+    "Patient",
+    "Provider",
+    "ScheduleDay",
+    "ScheduleSlot",
+    "Appointment",
+    "Assignment",
+    "MedicalRecord",
+    "MedicalRecordTemplate",
+    "Diagnosis",
+    "DiaryEntry",
+    "FileAttachment",
+    "Hint",
+    "AuditEntry",
+    "TranscriptChunk",
+    "FactCandidate",
+    "AgentIntent"
+  ],
+  "primary_specialty": "psychology-rehabilitation",
+  "example_provider": "БАТЫРГАЛИЕВА ЖАННА АЛЕКСАНДРОВНА"
+}
