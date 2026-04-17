@@ -137,6 +137,7 @@ button {
 }
 
 .controls,
+.scheduler-controls,
 .summary-grid,
 .inspection-grid,
 .readonly-grid,
@@ -149,6 +150,91 @@ button {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   padding: 18px 24px 24px;
   align-items: end;
+}
+
+.scheduler-card {
+  padding: 20px 24px 24px;
+}
+
+.scheduler-header,
+.scheduler-appointment {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.scheduler-header {
+  margin-bottom: 18px;
+}
+
+.scheduler-copy,
+.scheduler-empty,
+.scheduler-success {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+.scheduler-fixed-value {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fcfdff;
+  color: var(--text);
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+
+.scheduler-controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.scheduler-results {
+  margin-top: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.scheduler-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.scheduler-day-card,
+.scheduler-unassigned {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px;
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+}
+
+.scheduler-appointment {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.scheduler-unassigned h4,
+.scheduler-day-card h4 {
+  margin: 0;
+}
+
+.scheduler-unassigned-list {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.scheduler-error {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--danger);
 }
 
 .controls .wide {
@@ -442,6 +528,7 @@ button {
 
 @media (max-width: 860px) {
   .controls,
+  .scheduler-controls,
   .inspection-grid,
   .readonly-grid,
   .modal-grid,

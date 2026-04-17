@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildArtifacts, seedRuntimeState, writeArtifacts } from './lib/dataset.mjs';
+import { buildArtifacts, buildReadonlyTabs, seedRuntimeState, writeArtifacts } from './lib/dataset.mjs';
 import {
   applyInspectionSave,
   buildApplyPreview,
@@ -20,6 +20,7 @@ import {
   stopSpeechSession,
   searchPatients
 } from './lib/agent.mjs';
+import { buildPsychologistsFromRuntime, generatePsychologistSchedule } from './lib/scheduler.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -152,6 +153,65 @@ function getElevenLabsApiKey() {
   return process.env.ELEVENLABS_API_KEY || process.env.SPEECH_TO_TEXT_API_KEY || '';
 }
 
+function buildFallbackPatients() {
+  return [
+    {
+      patient_id: 'patient-fallback-1',
+      full_name: 'Алиева Амина Сериковна',
+      birth_date: '2018-05-14',
+      iin_or_local_id: '180514300001',
+      sex: 'female',
+      specialty_track: 'psychology-rehabilitation'
+    },
+    {
+      patient_id: 'patient-fallback-2',
+      full_name: 'Нургалиев Арсен Даниярович',
+      birth_date: '2017-11-02',
+      iin_or_local_id: '171102300002',
+      sex: 'male',
+      specialty_track: 'psychology-rehabilitation'
+    },
+    {
+      patient_id: 'patient-fallback-3',
+      full_name: 'Садыкова Малика Руслановна',
+      birth_date: '2019-02-20',
+      iin_or_local_id: '190220300003',
+      sex: 'female',
+      specialty_track: 'psychology-rehabilitation'
+    }
+  ];
+}
+
+function getSchedulerPatients(runtime) {
+  const patients = Array.isArray(runtime?.patients) && runtime.patients.length
+    ? runtime.patients
+    : buildFallbackPatients();
+
+  return patients.map((patient) => ({
+    patient_id: patient.patient_id,
+    full_name: patient.full_name,
+    birth_date: patient.birth_date || '',
+    iin_or_local_id: patient.iin_or_local_id || '',
+    sex: patient.sex || '',
+    specialty_track: patient.specialty_track || 'psychology-rehabilitation'
+  }));
+}
+
+function getSchedulerPatientById(runtime, patientId) {
+  return getSchedulerPatients(runtime).find((patient) => patient.patient_id === patientId) || null;
+}
+
+function getAttachedPatientsByProvider(runtime, providerId) {
+  const provider = Array.isArray(runtime?.providers)
+    ? runtime.providers.find((item) => item.provider_id === providerId)
+    : null;
+  const attachedIds = new Set(Array.isArray(provider?.attached_patient_ids) ? provider.attached_patient_ids : []);
+  if (!attachedIds.size) {
+    return Array.isArray(runtime?.patients) ? runtime.patients : [];
+  }
+  return (Array.isArray(runtime?.patients) ? runtime.patients : []).filter((patient) => attachedIds.has(patient.patient_id));
+}
+
 function resetAppointmentMedicalState(appointment, patient) {
   appointment.patient_id = patient.patient_id;
   appointment.status = 'scheduled';
@@ -183,6 +243,10 @@ function resetAppointmentMedicalState(appointment, patient) {
     updated_at: null,
     last_preview: null
   };
+  appointment.readonly_tabs = {
+    ...buildReadonlyTabs(patient),
+    diaries: [{ id: 'diary-1', note: `${patient.full_name}: прием запланирован, форма ожидает заполнения.` }]
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -195,6 +259,7 @@ async function handleApi(req, res, url) {
       },
       currentDate: runtime.currentDate,
       providers: runtime.providers,
+      patients: getSchedulerPatients(runtime),
       scheduleDay: serializeScheduleDay(getCurrentDay(runtime.currentDate)),
       sourceOfTruth: {
         generated_at: artifacts.generated_at,
@@ -226,7 +291,48 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/patients/search') {
     const q = url.searchParams.get('q') || '';
-    return sendJson(res, 200, { patients: searchPatients(runtime, q) });
+    const providerIdFromQuery = url.searchParams.get('providerId') || '';
+    const slotId = url.searchParams.get('slotId') || '';
+    const slotProviderId = slotId
+      ? runtime.scheduleDays.flatMap((day) => day.slots).find((slot) => slot.slot_id === slotId)?.provider_id || ''
+      : '';
+    const providerId = providerIdFromQuery || slotProviderId;
+    const runtimePatients = providerId
+      ? getAttachedPatientsByProvider(runtime, providerId)
+      : (Array.isArray(runtime?.patients) ? runtime.patients : []);
+    const sourcePatients = runtimePatients.length
+      ? (q ? runtimePatients.filter((patient) => String(patient.full_name || '').toLowerCase().includes(String(q).trim().toLowerCase()) || String(patient.iin_or_local_id || '').includes(q)) : runtimePatients)
+      : getSchedulerPatients(runtime);
+    const normalized = String(q || '').trim().toLowerCase();
+    const patients = normalized
+      ? sourcePatients.filter((patient) => String(patient.full_name || '').toLowerCase().includes(normalized) || String(patient.iin_or_local_id || '').includes(normalized))
+      : sourcePatients;
+    return sendJson(res, 200, { patients });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/psychologist-schedule/generate') {
+    const body = await readBody(req);
+    const patient = getPatientById(runtime, body.patientId) || getSchedulerPatientById(runtime, body.patientId);
+    const sessionCount = Number(body.sessionCount || 9);
+
+    if (!patient) {
+      return sendJson(res, 404, { error: 'Patient not found.' });
+    }
+
+    if (!Number.isInteger(sessionCount) || sessionCount < 1 || sessionCount > 9) {
+      return sendJson(res, 400, { error: 'sessionCount must be an integer from 1 to 9.' });
+    }
+
+    if (body.durationMin != null && Number(body.durationMin) !== 30) {
+      return sendJson(res, 400, { error: 'Psychologist sessions currently support fixed 30-minute slots only.' });
+    }
+
+    return sendJson(res, 200, generatePsychologistSchedule({
+      patient,
+      psychologists: buildPsychologistsFromRuntime(runtime),
+      startDate: body.startDate || runtime.currentDate,
+      sessionCount
+    }));
   }
 
   if (req.method === 'GET' && /^\/api\/appointments\//.test(url.pathname)) {

@@ -5,11 +5,20 @@ const state = {
   hints: [],
   auditEntries: [],
   route: { screen: 'schedule', appointmentId: null },
-  patientModal: { open: false, slotId: null, patients: [], query: '', selectedPatientId: null },
+  patientModal: { open: false, slotId: null, providerId: null, patients: [], query: '', selectedPatientId: null },
   statusFilter: 'all',
   activeTab: 'inspection',
   toast: '',
-  sourceOfTruth: null
+  sourceOfTruth: null,
+  scheduleGenerator: {
+    patients: [],
+    patientId: '',
+    sessionCount: 9,
+    startDate: '',
+    result: null,
+    loading: false,
+    error: ''
+  }
 };
 
 const app = document.querySelector('#app');
@@ -49,6 +58,22 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function formatSpecialtyTrack(value) {
+  if (value === 'psychology-rehabilitation') return 'Психолог';
+  return value || '';
+}
+
+function formatPersonName(value) {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('kk-KZ');
+
+  if (!normalized) return '';
+
+  return normalized.replace(/(^|[\s-])([\p{L}])/gu, (match, prefix, letter) => `${prefix}${letter.toLocaleUpperCase('kk-KZ')}`);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -78,6 +103,8 @@ async function bootstrap() {
   state.bootstrap = payload;
   state.scheduleDay = payload.scheduleDay;
   state.sourceOfTruth = payload.sourceOfTruth;
+  state.scheduleGenerator.startDate = payload.scheduleDay?.date || payload.currentDate || '';
+  await loadScheduleGeneratorPatients(payload.patients || []);
   await refreshAudit();
   if (state.route.screen === 'inspection' && state.route.appointmentId) {
     await loadInspection(state.route.appointmentId);
@@ -95,10 +122,33 @@ async function refreshAudit() {
 async function loadSchedule(date = state.scheduleDay?.date || state.bootstrap?.currentDate, status = state.statusFilter) {
   const payload = await api(`/api/schedule?date=${encodeURIComponent(date)}&status=${encodeURIComponent(status)}`);
   state.scheduleDay = payload;
+  state.scheduleGenerator.startDate = payload.date;
   state.route = { screen: 'schedule', appointmentId: null };
   state.activeTab = 'inspection';
   await loadHints('schedule', null);
   render();
+}
+
+async function loadScheduleGeneratorPatients(bootstrapPatients = []) {
+  let patients = [];
+
+  try {
+    const payload = await api('/api/patients/search');
+    patients = payload.patients || [];
+  } catch (error) {
+    patients = bootstrapPatients;
+  }
+
+  if (!patients.length) {
+    patients = bootstrapPatients;
+  }
+
+  state.scheduleGenerator.patients = patients;
+
+  const hasCurrentSelection = patients.some((patient) => patient.patient_id === state.scheduleGenerator.patientId);
+  if (!hasCurrentSelection) {
+    state.scheduleGenerator.patientId = patients[0]?.patient_id || '';
+  }
 }
 
 async function loadHints(screenId, appointmentId) {
@@ -116,10 +166,13 @@ async function loadInspection(appointmentId) {
 }
 
 async function openPatientModal(slotId) {
-  const payload = await api('/api/patients/search');
+  const slot = state.scheduleDay?.slots?.find((item) => item.slot_id === slotId);
+  const providerId = slot?.provider_id || '';
+  const payload = await api(`/api/patients/search?slotId=${encodeURIComponent(slotId)}${providerId ? `&providerId=${encodeURIComponent(providerId)}` : ''}`);
   state.patientModal = {
     open: true,
     slotId,
+    providerId,
     patients: payload.patients || [],
     query: '',
     selectedPatientId: null
@@ -127,8 +180,31 @@ async function openPatientModal(slotId) {
   render();
 }
 
+async function generatePsychologistScheduleRequest() {
+  state.scheduleGenerator.loading = true;
+  state.scheduleGenerator.error = '';
+  render();
+
+  try {
+    state.scheduleGenerator.result = await api('/api/psychologist-schedule/generate', {
+      method: 'POST',
+      body: JSON.stringify({
+        patientId: state.scheduleGenerator.patientId,
+        sessionCount: Number(state.scheduleGenerator.sessionCount),
+        startDate: state.scheduleGenerator.startDate || state.scheduleDay?.date || state.bootstrap?.currentDate
+      })
+    });
+  } catch (error) {
+    state.scheduleGenerator.error = error.message || 'Failed to generate schedule.';
+  } finally {
+    state.scheduleGenerator.loading = false;
+    render();
+  }
+}
+
 async function searchModalPatients(query) {
-  const payload = await api(`/api/patients/search?q=${encodeURIComponent(query)}`);
+  const providerQuery = state.patientModal.providerId ? `&providerId=${encodeURIComponent(state.patientModal.providerId)}` : '';
+  const payload = await api(`/api/patients/search?q=${encodeURIComponent(query)}${providerQuery}`);
   state.patientModal.patients = payload.patients || [];
   render();
 }
@@ -140,7 +216,7 @@ async function assignPatientToSlot() {
     body: JSON.stringify({ patient_id: state.patientModal.selectedPatientId })
   });
   state.patientModal.open = false;
-  state.toast = `Пациент ${payload.patient.full_name} назначен на слот.`;
+  state.toast = `Пациент ${formatPersonName(payload.patient.full_name)} назначен на слот.`;
   await refreshAudit();
   await loadInspection(payload.appointment.appointment_id);
 }
@@ -206,7 +282,7 @@ function renderPageHeader() {
   const inspectionTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'inspection')?.title || 'Назначение';
   const title = state.route.screen === 'inspection' ? inspectionTitle : scheduleTitle;
   const subtitle = state.route.screen === 'inspection'
-    ? state.appointmentBundle?.patient?.full_name || ''
+    ? formatPersonName(state.appointmentBundle?.patient?.full_name || '')
     : state.bootstrap?.providers?.[0]?.schedule_name || '';
   return `
     <section class="card header-bar">
@@ -224,29 +300,97 @@ function renderPageHeader() {
   `;
 }
 
+function renderPsychologistSchedulePanel() {
+  const generator = state.scheduleGenerator;
+  const patients = generator.patients || [];
+  const result = generator.result;
+
+  return `
+    <section class="card scheduler-card">
+      <div class="scheduler-header">
+        <div></div>
+        <button class="button" data-action="generate-psychologist-schedule" ${generator.loading ? 'disabled' : ''}>
+          ${generator.loading ? 'Формирование...' : 'Сформировать расписание'}
+        </button>
+      </div>
+      <div class="scheduler-controls">
+        <div class="field-group">
+          <label for="schedule-generator-patient">Пациент</label>
+          <select id="schedule-generator-patient">
+            ${patients.map((patient) => `<option value="${escapeHtml(patient.patient_id)}" ${patient.patient_id === generator.patientId ? 'selected' : ''}>${escapeHtml(formatPersonName(patient.full_name))}${patient.iin_or_local_id ? ` • ${escapeHtml(patient.iin_or_local_id)}` : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="schedule-generator-session-count">Занятий</label>
+          <input id="schedule-generator-session-count" type="number" min="1" max="9" value="${escapeHtml(generator.sessionCount)}" />
+        </div>
+        <div class="field-group">
+          <label>Длительность</label>
+          <div class="scheduler-fixed-value">30 минут</div>
+        </div>
+      </div>
+      ${generator.error ? `<div class="scheduler-error">${escapeHtml(generator.error)}</div>` : ''}
+      ${result ? renderGeneratedPsychologistSchedule(result) : ''}
+    </section>
+  `;
+}
+
+function renderGeneratedPsychologistSchedule(result) {
+  return `
+    <div class="scheduler-results">
+      <div class="scheduler-days">
+        ${result.days.map((day) => `
+          <article class="scheduler-day-card">
+            <header class="slot-header">
+              <div>
+                <h4>${escapeHtml(day.date)}</h4>
+                <div class="slot-subtitle">${day.appointments.length} ${day.appointments.length === 1 ? 'занятие' : 'занятия'}</div>
+              </div>
+            </header>
+            ${day.appointments.map((appointment) => `
+              <div class="scheduler-appointment">
+                <strong>${escapeHtml(formatPersonName(appointment.psychologistName))}</strong>
+                <span>${escapeHtml(appointment.start)} - ${escapeHtml(appointment.end)}</span>
+                <span class="meta-pill">${escapeHtml(String(appointment.durationMin))} мин</span>
+              </div>
+            `).join('')}
+          </article>
+        `).join('')}
+      </div>
+      <div class="scheduler-unassigned">
+        <h4>Не распределено</h4>
+        ${result.unassigned.length
+          ? `<ul class="scheduler-unassigned-list">${result.unassigned.map((item) => `<li>${escapeHtml(item.date)} - ${escapeHtml(item.reason)}</li>`).join('')}</ul>`
+          : '<p class="scheduler-success">Все занятия распределены.</p>'}
+      </div>
+    </div>
+  `;
+}
+
 function renderSchedule() {
   const scheduleDay = state.scheduleDay;
   return `
+    ${renderPsychologistSchedulePanel()}
     <section class="card" data-screen="schedule">
       <div class="controls">
         <div class="field-group wide">
-          <label for="dpCalendarDate">Дата</label>
+          <label for="dpCalendarDate">\u0414\u0430\u0442\u0430</label>
           <input id="dpCalendarDate" data-field-key="calendar-date" type="date" value="${escapeHtml(scheduleDay.date)}" />
         </div>
         <div class="field-group wide">
-          <label for="cmbGridSchedules">График</label>
+          <label for="cmbGridSchedules">\u0413\u0440\u0430\u0444\u0438\u043a</label>
           <select id="cmbGridSchedules" data-field-key="grid-schedule">
             <option value="provider-1">${escapeHtml(state.bootstrap.providers[0].schedule_name)}</option>
           </select>
         </div>
         <div class="field-group">
-          <label for="cmbQueueTypeFilter">Статус</label>
+          <label for="cmbQueueTypeFilter">\u0421\u0442\u0430\u0442\u0443\u0441</label>
           <select id="cmbQueueTypeFilter">${renderOptionList(selectOptions.statusFilter, state.statusFilter)}</select>
         </div>
         <div class="inline-actions">
-          <button id="btnPrevDay" class="ghost-button">Предыдущий день</button>
-          <button id="btnNextDay" class="ghost-button">Следующий день</button>
-          <button id="btnRefresh" class="secondary-button">Обновить</button>
+          <button id="btnPrevDay" class="ghost-button">\u041f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0438\u0439 \u0434\u0435\u043d\u044c</button>
+          <button id="btnNextDay" class="ghost-button">\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0434\u0435\u043d\u044c</button>
+          <button id="btnRefresh" class="secondary-button">\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c</button>
         </div>
       </div>
       <div class="schedule-wrap">
@@ -256,18 +400,18 @@ function renderSchedule() {
               <li class="slot-card" data-slot-id="${escapeHtml(slot.slot_id)}" data-appointment-id="${escapeHtml(slot.appointment_id)}">
                 <div class="slot-header">
                   <div>
-                    <h3>${escapeHtml(slot.patient.full_name)}</h3>
-                    <div class="slot-subtitle">${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)} • ${escapeHtml(slot.service_name)}</div>
+                    <h3>${escapeHtml(formatPersonName(slot.patient?.full_name) || '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e\u0435 \u043e\u043a\u043d\u043e')}</h3>
+                    <div class="slot-subtitle">${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)} • ${escapeHtml(slot.patient ? slot.service_name : '\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430')}</div>
                   </div>
-                  <span class="status-pill ${escapeHtml(slot.status)}">${slot.status === 'completed' ? 'Выполнено' : 'Назначено'}</span>
+                  <span class="status-pill ${escapeHtml(slot.status)}">${slot.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : slot.status === 'scheduled' ? '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e' : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e'}</span>
                 </div>
                 <div class="patient-tags">
-                  <span class="meta-pill">ИИН: ${escapeHtml(slot.patient.iin_or_local_id)}</span>
+                  ${slot.patient ? `<span class="meta-pill">\u0418\u0418\u041d: ${escapeHtml(slot.patient.iin_or_local_id)}</span>` : ''}
                   <span class="meta-pill">${escapeHtml(slot.date)}</span>
                 </div>
                 <div class="slot-actions">
-                  <button class="button" data-action="open-inspection" data-appointment-id="${escapeHtml(slot.appointment_id)}">Исполнить</button>
-                  <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">Прикрепленные пациенты</button>
+                  ${slot.patient ? `<button class="button" data-action="open-inspection" data-appointment-id="${escapeHtml(slot.appointment_id)}">\u0418\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u044c</button>` : ''}
+                  <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">${slot.patient ? '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u043b\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u044b' : '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430'}</button>
                 </div>
               </li>
             `).join('')}
@@ -407,7 +551,7 @@ function renderInspection() {
       <div class="inspection-summary">
         <div>
           <div class="badges">
-            <span class="badge">${escapeHtml(patient.full_name)}</span>
+            <span class="badge">${escapeHtml(formatPersonName(patient.full_name))}</span>
             <span class="badge">${escapeHtml(patient.iin_or_local_id)}</span>
             <span class="badge">${escapeHtml(appointment.service_name)}</span>
           </div>
@@ -427,15 +571,28 @@ function renderInspection() {
 }
 
 function renderHints() {
+  const scheduleGuide = state.route.screen === 'schedule'
+    ? `
+      <div class="hint-card">
+        <p><strong>\u0427\u0442\u043e \u0437\u0434\u0435\u0441\u044c \u0437\u0430 \u0447\u0442\u043e \u043e\u0442\u0432\u0435\u0447\u0430\u0435\u0442</strong></p>
+        <p>\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e \u2014 \u043e\u043a\u043d\u043e \u0431\u0435\u0437 \u0437\u0430\u043f\u0438\u0441\u0430\u043d\u043d\u043e\u0433\u043e \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430.</p>
+        <p>\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0435\u043c \u0443\u0436\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d, \u0438 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043c\u043e\u0436\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u044c.</p>
+        <p>\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0435\u043c \u0443\u0436\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d, \u0438 \u0437\u0430\u043f\u0438\u0441\u044c \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0430.</p>
+        <p>\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430 \u2014 \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u043e\u0432 \u0438\u043c\u0435\u043d\u043d\u043e \u044d\u0442\u043e\u0433\u043e \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430.</p>
+      </div>
+    `
+    : '';
+
   return `
     <section class="card">
-      <h3 class="panel-title">Подсказки</h3>
+      <h3 class="panel-title">${state.route.screen === 'schedule' ? '\u041a\u0430\u043a \u0447\u0438\u0442\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435' : '\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438'}</h3>
+      ${scheduleGuide}
       <ul class="hint-list">
         ${state.hints.map((hint) => `
           <li class="hint-card">
             <p>${escapeHtml(hint.message)}</p>
           </li>
-        `).join('') || '<li class="hint-card"><p>Подсказок пока нет.</p></li>'}
+        `).join('') || '<li class="hint-card"><p>\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0445 \u043f\u043e\u0434\u0441\u043a\u0430\u0437\u043e\u043a \u043f\u043e\u043a\u0430 \u043d\u0435\u0442.</p></li>'}
       </ul>
     </section>
   `;
@@ -458,8 +615,8 @@ function renderPatientModal() {
             ${state.patientModal.patients.map((patient) => `
               <article class="patient-card ${state.patientModal.selectedPatientId === patient.patient_id ? 'selected' : ''}" data-patient-id="${escapeHtml(patient.patient_id)}">
                 <header>
-                  <h4>${escapeHtml(patient.full_name)}</h4>
-                  <span class="meta-pill">${escapeHtml(patient.specialty_track)}</span>
+                  <h4>${escapeHtml(formatPersonName(patient.full_name))}</h4>
+                  <span class="meta-pill">${escapeHtml(formatSpecialtyTrack(patient.specialty_track))}</span>
                 </header>
                 <p>ИИН: ${escapeHtml(patient.iin_or_local_id)}</p>
                 <p>Источники: ${escapeHtml((patient.history_refs || []).join(', '))}</p>
@@ -548,6 +705,9 @@ document.addEventListener('click', async (event) => {
   if (action === 'open-inspection') {
     window.location.hash = `#/inspection/${target.dataset.appointmentId}`;
   }
+  if (action === 'generate-psychologist-schedule') {
+    await generatePsychologistScheduleRequest();
+  }
   if (action === 'open-patient-modal') {
     await openPatientModal(target.dataset.slotId);
   }
@@ -593,6 +753,10 @@ document.addEventListener('change', async (event) => {
     await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: target.value }) });
     await loadSchedule(target.value, state.statusFilter);
   }
+  if (target.id === 'schedule-generator-patient') {
+    state.scheduleGenerator.patientId = target.value;
+    render();
+  }
 });
 
 document.addEventListener('input', async (event) => {
@@ -600,6 +764,13 @@ document.addEventListener('input', async (event) => {
   if (target.id === 'modal-search') {
     state.patientModal.query = target.value;
     await searchModalPatients(target.value);
+  }
+  if (target.id === 'schedule-generator-session-count') {
+    const nextValue = Number(target.value || 1);
+    state.scheduleGenerator.sessionCount = Math.max(1, Math.min(9, nextValue));
+    if (String(state.scheduleGenerator.sessionCount) !== target.value) {
+      target.value = state.scheduleGenerator.sessionCount;
+    }
   }
 });
 
