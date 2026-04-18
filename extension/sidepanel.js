@@ -81,6 +81,7 @@ const state = {
   latestSuggestions: [],
   lastProcessedSpeechKey: '',
   lastProcessedSpeechAt: 0,
+  pendingSaveConfirmation: null,
   breakModeWidget: null
 };
 
@@ -351,6 +352,41 @@ function compactJson(value) {
   } catch {
     return String(value);
   }
+}
+
+function rememberSaveConfirmation(confirmation, savePreview = null) {
+  if (!confirmation) {
+    state.pendingSaveConfirmation = null;
+    return;
+  }
+  state.pendingSaveConfirmation = {
+    confirmation,
+    savePreview: savePreview || confirmation.preview_summary || null
+  };
+}
+
+function savePreviewCards(savePreview, confirmation) {
+  if (!savePreview) return [];
+  const tags = [
+    savePreview.action_target === 'save-and-close' ? 'сохранить и закрыть' : 'сохранить',
+    `полей: ${Array.isArray(savePreview.changed_fields) ? savePreview.changed_fields.length : 0}`
+  ];
+  if (savePreview.checkbox_selection_count != null) {
+    tags.push(`чекбоксов: ${savePreview.checkbox_selection_count}`);
+  }
+  if (confirmation?.status) {
+    tags.push(`статус: ${confirmation.status}`);
+  }
+  return [{
+    title: 'Preview сохранения',
+    text: savePreview.summary_text || 'Подготовлено сохранение формы.',
+    tags,
+    action: {
+      kind: 'primary',
+      label: 'Подтвердить сохранение',
+      onClick: confirmPendingSave
+    }
+  }];
 }
 
 function patientCandidateText(candidate) {
@@ -902,6 +938,38 @@ async function handleVoiceCommand(text, { fromRecording = false, sttConfidence =
     return result;
   }
 
+  if (result.commandResult?.intent === 'confirm_save') {
+    rememberSaveConfirmation(null, null);
+    appendMessage({
+      role: 'assistant',
+      title: 'Сохранено',
+      body: 'Сохранение подтверждено голосом и выполнено.'
+    });
+    if (result.screenContext) {
+      state.latestScreenContext = result.screenContext;
+    }
+    setStatus('Сохранение подтверждено и выполнено.');
+    return result;
+  }
+
+  if (result.domExecution?.mode === 'confirmation-required') {
+    rememberSaveConfirmation(result.domExecution.confirmation, result.domExecution.savePreview);
+    appendMessage({
+      role: 'assistant',
+      title: 'Нужно подтверждение врача',
+      body: 'Команда распознана, но финальное сохранение заблокировано до отдельного confirm-step.',
+      cards: [
+        ...savePreviewCards(result.domExecution.savePreview, result.domExecution.confirmation),
+        ...commandDebugCards(result.debug || {}, result.commandResult || {})
+      ]
+    });
+    if (result.screenContext) {
+      state.latestScreenContext = result.screenContext;
+    }
+    setStatus('Preview сохранения готов. Подтвердите действие отдельно.');
+    return result;
+  }
+
   const finalAction = result.actionPlan?.actionTarget || result.commandResult?.actionTarget || result.commandResult?.intent || 'действие';
   appendMessage({
     role: 'assistant',
@@ -997,8 +1065,14 @@ async function saveInspection() {
   try {
     const result = await send({ type: 'save-inspection' });
     if (!result.ok || result.result?.ok === false) throw new Error(result.error || 'Не удалось сохранить форму.');
-    appendMessage({ role: 'assistant', title: 'Сохранено', body: 'Форма сохранена. Проверьте статус в песочнице.' });
-    await refreshContext({ silent: true });
+    rememberSaveConfirmation(result.confirmation, result.savePreview);
+    appendMessage({
+      role: 'assistant',
+      title: 'Preview готов',
+      body: 'Сохранение не выполнено автоматически. Проверьте summary и подтвердите отдельно.',
+      cards: savePreviewCards(result.savePreview, result.confirmation)
+    });
+    setStatus('Preview сохранения готов. Жду подтверждение врача.');
   } catch (error) {
     showError(error);
   }
@@ -1008,8 +1082,36 @@ async function saveCloseInspection() {
   try {
     const result = await send({ type: 'save-close-inspection' });
     if (!result.ok || result.result?.ok === false) throw new Error(result.error || 'Не удалось сохранить и закрыть форму.');
-    appendMessage({ role: 'assistant', title: 'Сохранено и закрыто', body: 'Прием завершен в песочнице.' });
+    rememberSaveConfirmation(result.confirmation, result.savePreview);
+    appendMessage({
+      role: 'assistant',
+      title: 'Preview готов',
+      body: 'Подготовлено сохранение с закрытием приема. Подтвердите действие отдельным шагом.',
+      cards: savePreviewCards(result.savePreview, result.confirmation)
+    });
+    setStatus('Preview сохранения и закрытия готов. Жду подтверждение врача.');
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function confirmPendingSave() {
+  try {
+    if (!state.pendingSaveConfirmation?.confirmation) {
+      throw new Error('Нет ожидающего подтверждения сохранения.');
+    }
+    const result = await send({ type: 'confirm-save-inspection' });
+    if (!result.ok || result.result?.ok === false) {
+      throw new Error(result.error || 'Не удалось подтвердить сохранение.');
+    }
+    rememberSaveConfirmation(null, null);
+    appendMessage({
+      role: 'assistant',
+      title: 'Сохранено',
+      body: 'Документ сохранен после отдельного подтверждения врача.'
+    });
     await refreshContext({ silent: true });
+    setStatus('Сохранение подтверждено и выполнено.');
   } catch (error) {
     showError(error);
   }

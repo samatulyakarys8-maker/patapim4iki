@@ -3,6 +3,7 @@ import { shouldCreateBackendSpeechSession, transcriptRouteForScreen } from './vo
 const API_BASE = 'http://localhost:3030';
 const previewCache = new Map();
 const speechSessionCache = new Map();
+const saveConfirmationCache = new Map();
 
 function advisorStageLabel(stage = '') {
   if (stage === 'complaints') return 'Жалобы';
@@ -104,6 +105,59 @@ async function postJson(path, body) {
   return payload;
 }
 
+function saveActionTarget(closeAfter = false) {
+  return closeAfter ? 'save-and-close' : 'save';
+}
+
+function isSaveConfirmationCommand(text = '') {
+  return /подтверждаю сохранение|подтверди сохранение|сохрани после проверки|confirm save/i.test(String(text || '').toLowerCase());
+}
+
+async function serializeInspectionForm(tabId) {
+  await ensureContentScript(tabId);
+  const payload = await askContent(tabId, { type: 'serialize-inspection-form' });
+  if (!payload?.ok) {
+    throw new Error(payload?.error || 'Не удалось сериализовать форму назначения.');
+  }
+  return payload;
+}
+
+async function createSavePreview(tabId, screenContext, { closeAfter = false, actionSource = 'extension' } = {}) {
+  if (screenContext.screen_id !== 'inspection' || !screenContext.selected_appointment_id) {
+    throw new Error('Сохранение доступно только на открытой форме назначения.');
+  }
+  const serialized = await serializeInspectionForm(tabId);
+  const preview = await postJson('/api/save/preview', {
+    appointmentId: screenContext.selected_appointment_id,
+    actionTarget: saveActionTarget(closeAfter),
+    inspectionPayload: serialized.payload,
+    screenSnapshotHash: serialized.screen_snapshot_hash,
+    actionSource
+  });
+  saveConfirmationCache.set(tabId, preview.confirmation);
+  return { preview, serialized };
+}
+
+async function confirmSavePreview(tabId, screenContext, { actionSource = 'extension' } = {}) {
+  const confirmation = saveConfirmationCache.get(tabId);
+  if (!confirmation) {
+    throw new Error('Сначала получите preview сохранения.');
+  }
+  if (screenContext.screen_id !== 'inspection' || !screenContext.selected_appointment_id) {
+    throw new Error('Подтверждение доступно только на открытой форме назначения.');
+  }
+  const serialized = await serializeInspectionForm(tabId);
+  const payload = await postJson('/api/save/confirm', {
+    appointmentId: screenContext.selected_appointment_id,
+    confirmationId: confirmation.confirmation_id,
+    inspectionPayload: serialized.payload,
+    screenSnapshotHash: serialized.screen_snapshot_hash,
+    actionSource
+  });
+  saveConfirmationCache.delete(tabId);
+  return { payload, serialized };
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   if (chrome.sidePanel?.setPanelBehavior) {
     await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -161,6 +215,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === 'voice-command') {
       const screenContext = await getScreenContext(tab.id);
+      if (isSaveConfirmationCommand(message.transcript || '')) {
+        const confirmed = await confirmSavePreview(tab.id, screenContext, { actionSource: 'voice-command' });
+        const refreshedContext = await getScreenContext(tab.id).catch(() => screenContext);
+        sendResponse({
+          ok: true,
+          screenContext: refreshedContext,
+          commandResult: {
+            intent: 'confirm_save',
+            actionTarget: 'confirm-save',
+            confidence: 0.96
+          },
+          actionPlan: {
+            intent: 'confirm_save',
+            risk_level: 'high',
+            requires_preview: true,
+            requires_confirmation: false
+          },
+          domExecution: {
+            ok: true,
+            mode: 'backend-confirmed-save',
+            verification: { ok: true, reason: 'save_confirmed_and_committed' },
+            confirmation: confirmed.payload.confirmation,
+            appointment: confirmed.payload.appointment
+          },
+          verification: { ok: true, reason: 'save_confirmed_and_committed' }
+        });
+        return;
+      }
       const observation = await postJson('/api/agent/observe', {
         command: message.transcript,
         transcriptDelta: message.transcript,
@@ -222,12 +304,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
         auditResult = 'patient_slot_not_found';
       } else if (actionPlan) {
-        domExecution = await askContent(tab.id, {
-          type: 'execute-action-plan',
-          actionPlan
-        });
-        auditResult = domExecution.ok ? 'executed' : (domExecution.failed?.reason || domExecution.verification?.reason || 'execution_failed');
-        refreshedContext = await getScreenContext(tab.id).catch(() => screenContext);
+        if (actionPlan.requires_confirmation) {
+          const prepared = await createSavePreview(tab.id, screenContext, {
+            closeAfter: actionPlan.actionTarget === 'save-and-close',
+            actionSource: 'voice-command'
+          });
+          domExecution = {
+            ok: true,
+            mode: 'confirmation-required',
+            verification: { ok: true, reason: 'save_preview_created' },
+            confirmation: prepared.preview.confirmation,
+            savePreview: prepared.preview.savePreview
+          };
+          auditResult = 'save_preview_created';
+          refreshedContext = await getScreenContext(tab.id).catch(() => screenContext);
+        } else {
+          domExecution = await askContent(tab.id, {
+            type: 'execute-action-plan',
+            actionPlan
+          });
+          auditResult = domExecution.ok ? 'executed' : (domExecution.failed?.reason || domExecution.verification?.reason || 'execution_failed');
+          refreshedContext = await getScreenContext(tab.id).catch(() => screenContext);
+        }
       } else if (observation.preview?.domOperations?.length) {
         domExecution = await askContent(tab.id, {
           type: 'apply-preview',
@@ -533,12 +631,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === 'save-close-inspection') {
       const screenContext = await getScreenContext(tab.id);
-      if (screenContext.screen_id !== 'inspection') {
-        throw new Error('Сохранение доступно только на экране назначения.');
-      }
-      const result = await askContent(tab.id, {
-        type: 'apply-preview',
-        domOperations: [{ type: 'click', selector: '#btnSaveAndCloseInspectionResult' }]
+      const result = await createSavePreview(tab.id, screenContext, {
+        closeAfter: true,
+        actionSource: 'extension-panel'
       });
       await fetch(`${API_BASE}/api/audit`, {
         method: 'POST',
@@ -549,21 +644,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           screenId: 'inspection',
           entityRefs: { appointment_id: screenContext.selected_appointment_id || null },
           payload: {},
-          result: result.ok ? 'saved' : 'save_failed'
+          result: 'save_preview_created'
         })
       });
-      sendResponse({ ok: true, screenContext, result });
+      sendResponse({ ok: true, screenContext, result: { ok: true, requiresConfirmation: true }, confirmation: result.preview.confirmation, savePreview: result.preview.savePreview });
       return;
     }
 
     if (message.type === 'save-inspection') {
       const screenContext = await getScreenContext(tab.id);
-      if (screenContext.screen_id !== 'inspection') {
-        throw new Error('Сохранение доступно только на экране назначения.');
-      }
-      const result = await askContent(tab.id, {
-        type: 'apply-preview',
-        domOperations: [{ type: 'click', selector: '#btnSaveInspectionResult' }]
+      const result = await createSavePreview(tab.id, screenContext, {
+        closeAfter: false,
+        actionSource: 'extension-panel'
       });
       await fetch(`${API_BASE}/api/audit`, {
         method: 'POST',
@@ -574,10 +666,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           screenId: 'inspection',
           entityRefs: { appointment_id: screenContext.selected_appointment_id || null },
           payload: {},
-          result: result.ok ? 'saved' : 'save_failed'
+          result: 'save_preview_created'
         })
       });
-      sendResponse({ ok: true, screenContext, result });
+      sendResponse({ ok: true, screenContext, result: { ok: true, requiresConfirmation: true }, confirmation: result.preview.confirmation, savePreview: result.preview.savePreview });
+      return;
+    }
+
+    if (message.type === 'confirm-save-inspection') {
+      const screenContext = await getScreenContext(tab.id);
+      const result = await confirmSavePreview(tab.id, screenContext, {
+        actionSource: 'extension-panel'
+      });
+      await fetch(`${API_BASE}/api/audit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actorType: 'extension',
+          actionType: 'confirm_save_inspection',
+          screenId: 'inspection',
+          entityRefs: { appointment_id: screenContext.selected_appointment_id || null },
+          payload: {},
+          result: 'save_confirmed_and_committed'
+        })
+      });
+      sendResponse({ ok: true, screenContext, result: { ok: true }, confirmation: result.payload.confirmation, appointment: result.payload.appointment });
       return;
     }
 

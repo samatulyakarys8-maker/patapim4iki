@@ -10,6 +10,8 @@ import {
   buildApplyPreview,
   buildProcedureSchedulePreview,
   buildHints,
+  commitConfirmedInspectionSave,
+  createSaveConfirmation,
   createAuditEntry,
   executeIntentPreview,
   getAppointmentById,
@@ -634,6 +636,60 @@ async function handleApi(req, res, url) {
     }));
     await persistRuntime();
     return sendJson(res, 200, { session, draftState: runtime.appointments[session.appointment_id].draft_state });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/save/preview') {
+    const body = await readBody(req);
+    const confirmation = createSaveConfirmation(runtime, {
+      appointmentId: body.appointmentId,
+      actionTarget: body.actionTarget,
+      inspectionPayload: body.inspectionPayload,
+      screenSnapshotHash: body.screenSnapshotHash,
+      actionSource: body.actionSource || 'extension'
+    });
+    addAudit(createAuditEntry({
+      actorType: body.actionSource || 'extension',
+      actionType: 'save_preview_created',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: body.appointmentId, patient_id: confirmation.patient_id },
+      payload: {
+        action_target: confirmation.action_type,
+        confirmation_id: confirmation.confirmation_id
+      },
+      result: confirmation.status
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, {
+      confirmation,
+      savePreview: confirmation.preview_summary
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/save/confirm') {
+    const body = await readBody(req);
+    const result = commitConfirmedInspectionSave(runtime, {
+      appointmentId: body.appointmentId,
+      confirmationId: body.confirmationId,
+      inspectionPayload: body.inspectionPayload,
+      screenSnapshotHash: body.screenSnapshotHash
+    });
+    addAudit(createAuditEntry({
+      actorType: body.actionSource || 'extension',
+      actionType: 'save_confirmed_and_committed',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: body.appointmentId, patient_id: result.confirmation.patient_id },
+      payload: {
+        confirmation_id: body.confirmationId,
+        action_target: result.confirmation.action_type
+      },
+      result: 'confirmed'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, {
+      appointment: result.appointment,
+      patient: getPatientById(runtime, result.appointment.patient_id),
+      confirmation: result.confirmation
+    });
   }
 
   if (req.method === 'POST' && /^\/api\/appointments\//.test(url.pathname) && url.pathname.endsWith('/save')) {

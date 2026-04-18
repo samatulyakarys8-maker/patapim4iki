@@ -8,36 +8,71 @@ function normalizeCommand(input) {
 
 const TARGET_REGISTRY = {
   'medical-records': {
+    targetKey: 'medical-records',
+    semanticRole: 'tab',
+    candidateNames: ['медицинские записи', 'мед записи'],
+    textAnchors: ['Медицинские записи'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="medicalRecords"]'],
     selector: '[data-action="switch-tab"][data-tab="medicalRecords"]',
     tabKey: 'medicalRecords',
     verify: { activeTab: 'medicalRecords', panelSelector: '.readonly-card[data-document-title="Медицинские записи"]' }
   },
   assignments: {
+    targetKey: 'assignments',
+    semanticRole: 'tab',
+    candidateNames: ['назначения'],
+    textAnchors: ['Назначения'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="assignments"]'],
     selector: '[data-action="switch-tab"][data-tab="assignments"]',
     tabKey: 'assignments',
     verify: { activeTab: 'assignments', panelSelector: '.readonly-card[data-document-title="Назначения"]' }
   },
   diaries: {
+    targetKey: 'diaries',
+    semanticRole: 'tab',
+    candidateNames: ['дневниковые записи', 'дневник'],
+    textAnchors: ['Дневниковые записи'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="diaries"]'],
     selector: '[data-action="switch-tab"][data-tab="diaries"]',
     tabKey: 'diaries',
     verify: { activeTab: 'diaries', panelSelector: '.readonly-card[data-document-title="Дневниковые записи"]' }
   },
   diagnoses: {
+    targetKey: 'diagnoses',
+    semanticRole: 'tab',
+    candidateNames: ['диагнозы', 'диагноз'],
+    textAnchors: ['Диагнозы'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="diagnoses"]'],
     selector: '[data-action="switch-tab"][data-tab="diagnoses"]',
     tabKey: 'diagnoses',
     verify: { activeTab: 'diagnoses', panelSelector: '.readonly-card[data-document-title="Диагнозы"]' }
   },
   files: {
+    targetKey: 'files',
+    semanticRole: 'tab',
+    candidateNames: ['файлы', 'файл'],
+    textAnchors: ['Файлы'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="files"]'],
     selector: '[data-action="switch-tab"][data-tab="files"]',
     tabKey: 'files',
     verify: { activeTab: 'files', panelSelector: '.readonly-card[data-document-title="Файлы"]' }
   },
   'discharge-summary': {
+    targetKey: 'discharge-summary',
+    semanticRole: 'tab',
+    candidateNames: ['выписной эпикриз', 'эпикриз', 'выписка'],
+    textAnchors: ['Выписной эпикриз'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="dischargeSummary"]'],
     selector: '[data-action="switch-tab"][data-tab="dischargeSummary"]',
     tabKey: 'dischargeSummary',
     verify: { activeTab: 'dischargeSummary', panelSelector: '.readonly-card[data-document-title="Выписной эпикриз"]' }
   },
   'audit-log': {
+    targetKey: 'audit-log',
+    semanticRole: 'button',
+    candidateNames: ['audit', 'журнал'],
+    textAnchors: ['Последние audit entries'],
+    legacySelectors: ['[data-action="show-slot-audit"]'],
     selector: '[data-action="show-slot-audit"]',
     tabKey: null,
     verify: { toast: true }
@@ -193,6 +228,25 @@ function visible(node) {
   return Boolean(node && node.offsetParent !== null);
 }
 
+function semanticText(node) {
+  return normalizeLabel([
+    node?.getAttribute?.('aria-label') || '',
+    node?.getAttribute?.('title') || '',
+    node?.getAttribute?.('placeholder') || '',
+    node?.getAttribute?.('data-document-title') || '',
+    node?.textContent || ''
+  ].join(' '));
+}
+
+function hashText(input) {
+  let hash = 0;
+  const text = String(input || '');
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
+  }
+  return `h${Math.abs(hash)}`;
+}
+
 function selectorForNode(node) {
   if (!node) return '';
   if (node.id) return `#${cssEscape(node.id)}`;
@@ -281,10 +335,55 @@ function visibleSlotCards() {
     .filter((item) => item.appointment_id);
 }
 
+function inspectionScreenEvidence() {
+  const evidence = [];
+  if (document.querySelector('section[data-screen="inspection"]')) evidence.push('inspection_section');
+  if (document.querySelector('#frmInspectionResult, form[data-screen="inspection"]')) evidence.push('inspection_form');
+  if (document.querySelector('#tbMedicalFinal, textarea[data-field-key="tbmedicalfinal"]')) evidence.push('conclusion_field');
+  if (document.querySelector('#btnSaveInspectionResult, button[data-action="save-inspection"]')) evidence.push('save_button');
+  if (document.querySelector('[data-patient-id][data-patient-name]')) evidence.push('patient_context');
+  return evidence;
+}
+
+function scheduleScreenEvidence() {
+  const evidence = [];
+  if (document.querySelector('section[data-screen="schedule"]')) evidence.push('schedule_section');
+  if (document.querySelector('#schedule')) evidence.push('schedule_root');
+  if (document.querySelector('.slot-card[data-appointment-id]')) evidence.push('slot_cards');
+  if (document.querySelector('#dpCalendarDate, input[data-field-key="calendar-date"]')) evidence.push('date_control');
+  if (document.querySelector('#cmbGridSchedules, select[data-field-key="grid-schedule"]')) evidence.push('provider_control');
+  return evidence;
+}
+
+function inferScreenState() {
+  const inspectionEvidence = inspectionScreenEvidence();
+  const scheduleEvidence = scheduleScreenEvidence();
+  if (inspectionEvidence.length >= 2) {
+    return {
+      screen_id: 'inspection',
+      confidence: Math.min(1, 0.45 + inspectionEvidence.length * 0.12),
+      evidence: inspectionEvidence,
+      active_regions: ['patient_context', 'inspection_form']
+    };
+  }
+  if (scheduleEvidence.length >= 2) {
+    return {
+      screen_id: 'schedule',
+      confidence: Math.min(1, 0.45 + scheduleEvidence.length * 0.12),
+      evidence: scheduleEvidence,
+      active_regions: ['schedule_controls', 'schedule_slots']
+    };
+  }
+  return {
+    screen_id: document.querySelector('[data-screen]')?.getAttribute('data-screen') || 'unknown',
+    confidence: 0.2,
+    evidence: [],
+    active_regions: []
+  };
+}
+
 function inferScreenId() {
-  if (document.querySelector('#frmInspectionResult')) return 'inspection';
-  if (document.querySelector('#schedule')) return 'schedule';
-  return document.querySelector('[data-screen]')?.getAttribute('data-screen') || 'unknown';
+  return inferScreenState().screen_id;
 }
 
 function selectedAppointmentId() {
@@ -317,7 +416,18 @@ function selectedPatientName() {
 }
 
 function activeTabKey() {
-  return document.querySelector('[data-action="switch-tab"].active')?.getAttribute('data-tab') || null;
+  const activeTab = document.querySelector('[data-action="switch-tab"].active');
+  if (activeTab) return activeTab.getAttribute('data-tab') || null;
+  if (document.querySelector('#frmInspectionResult, form[data-screen="inspection"]')) return 'inspection';
+  const visibleCard = Array.from(document.querySelectorAll('.readonly-card[data-document-title]')).find(visible);
+  const title = normalizeLabel(visibleCard?.getAttribute('data-document-title') || '');
+  if (title.includes('выписной эпикриз')) return 'dischargeSummary';
+  if (title.includes('медицинские записи')) return 'medicalRecords';
+  if (title.includes('дневниковые записи')) return 'diaries';
+  if (title.includes('диагнозы')) return 'diagnoses';
+  if (title.includes('файлы')) return 'files';
+  if (title.includes('назначения')) return 'assignments';
+  return null;
 }
 
 function valueForNode(node) {
@@ -342,17 +452,68 @@ function cssEscape(value) {
   return String(value).replace(/["\\]/g, '\\$&');
 }
 
+function queryVisibleNodes(selectors = []) {
+  for (const selector of selectors) {
+    if (!selector) continue;
+    const matched = Array.from(document.querySelectorAll(selector)).filter(visible);
+    if (matched.length) return matched;
+  }
+  return [];
+}
+
+function semanticScore(node, terms = [], containerHints = []) {
+  const haystack = semanticText(node);
+  let score = 0;
+  for (const term of terms.map(normalizeLabel).filter(Boolean)) {
+    if (haystack === term) score += 4;
+    else if (haystack.includes(term)) score += 2;
+  }
+  for (const hint of containerHints.map(normalizeLabel).filter(Boolean)) {
+    const containerText = normalizeLabel(node.closest('[data-screen], .inspection-wrap, .tab-list, .controls, .modal, .readonly-card')?.textContent || '');
+    if (containerText.includes(hint)) score += 1;
+  }
+  return score;
+}
+
+function findSemanticNode({
+  role = 'button',
+  candidateNames = [],
+  labelCandidates = [],
+  textAnchors = [],
+  containerHints = [],
+  legacySelectors = []
+} = {}) {
+  const searchTerms = [...candidateNames, ...labelCandidates, ...textAnchors];
+  const selectorMap = {
+    tab: ['[data-action="switch-tab"]', '[role="tab"]', 'button'],
+    button: ['button', '[role="button"]', 'a[href]'],
+    link: ['a[href]', 'button', '[role="button"]'],
+    form: ['#frmInspectionResult', 'form[data-screen="inspection"]', 'form'],
+    field: ['input', 'textarea', 'select']
+  };
+  const candidates = queryVisibleNodes(selectorMap[role] || selectorMap.button)
+    .map((node) => ({ node, score: semanticScore(node, searchTerms, containerHints) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+  if (candidates.length) return candidates[0].node;
+  return queryVisibleNodes(legacySelectors)[0] || null;
+}
+
 function sectionKeyFromSelector(selector) {
   const match = String(selector || '').match(/data-section-key=["']([^"']+)["']/);
   return match?.[1] || null;
 }
 
 function ensureInspectionTabVisible() {
-  if (document.querySelector('#frmInspectionResult')) return true;
-  const tabButton = document.querySelector('[data-action="switch-tab"][data-tab="inspection"]');
+  if (document.querySelector('#frmInspectionResult, form[data-screen="inspection"]')) return true;
+  const tabButton = findSemanticNode({
+    role: 'tab',
+    candidateNames: ['назначение', 'прием', 'приём', 'осмотр'],
+    legacySelectors: ['[data-action="switch-tab"][data-tab="inspection"]']
+  });
   if (!tabButton) return false;
   tabButton.click();
-  return Boolean(document.querySelector('#frmInspectionResult'));
+  return Boolean(document.querySelector('#frmInspectionResult, form[data-screen="inspection"]'));
 }
 
 function resolveCheckboxGroup(operation) {
@@ -405,7 +566,7 @@ function bestVisibleSlotCard(command) {
 }
 
 async function openAppointmentFromVisibleSchedule(command) {
-  if (inferScreenId() === 'inspection' && document.querySelector('#frmInspectionResult')) {
+  if (inferScreenId() === 'inspection' && document.querySelector('#frmInspectionResult, form[data-screen="inspection"]')) {
     return {
       ok: true,
       skipped: true,
@@ -417,13 +578,15 @@ async function openAppointmentFromVisibleSchedule(command) {
   if (!card) {
     return { ok: false, reason: 'No visible appointment card found on schedule' };
   }
-  const button = card.querySelector('[data-action="open-inspection"]');
+  const button = card.querySelector('[data-action="open-inspection"]')
+    || Array.from(card.querySelectorAll('button, [role="button"], a[href]'))
+      .find((node) => semanticScore(node, ['исполнить', 'открыть'], []) > 0);
   if (!button) {
     return { ok: false, selector: selectorForNode(card), reason: 'Appointment card has no open button' };
   }
   const before = window.location.hash;
   button.click();
-  const loaded = await waitForSelector('#frmInspectionResult', 7000);
+  const loaded = await waitForSelector('#frmInspectionResult, form[data-screen="inspection"]', 7000);
   return {
     ok: Boolean(loaded),
     selector: selectorForNode(button),
@@ -436,7 +599,11 @@ async function openAppointmentFromVisibleSchedule(command) {
 
 async function switchVisibleTab(tabKey, label) {
   const selector = `[data-action="switch-tab"][data-tab="${cssEscape(tabKey)}"]`;
-  const tab = await waitForSelector(selector, 5000);
+  const tab = findSemanticNode({
+    role: 'tab',
+    candidateNames: [label || '', tabKey || ''],
+    legacySelectors: [selector]
+  }) || await waitForSelector(selector, 5000);
   if (!tab) return { ok: false, selector, reason: `Tab not found: ${label || tabKey}` };
   tab.click();
   await wait(120);
@@ -526,23 +693,14 @@ async function executeActionPlan(actionPlan = {}) {
       if (!openResult.ok) return { ok: false, actionPlan, results, verification: { ok: false, reason: openResult.reason }, failed: openResult };
     }
     results.push(await switchVisibleTab(target.tabKey, actionPlan.actionTarget));
-  } else if (actionPlan.intent === 'save_record') {
-    const selector = actionPlan.actionTarget === 'save-and-close' ? '#btnSaveAndCloseInspectionResult' : '#btnSaveInspectionResult';
-    const button = document.querySelector(selector);
-    if (!button) {
-      return { ok: false, actionPlan, results, verification: { ok: false, reason: 'save_button_not_found' }, failed: { selector, reason: 'save_button_not_found' } };
-    }
-    button.click();
-    await wait(350);
-    results.push({ ok: true, selector, reason: 'save_button_clicked' });
-  } else if (actionPlan.intent === 'complete_service') {
-    const button = document.querySelector('#btnSaveAndCloseInspectionResult') || document.querySelector('#btnSaveInspectionResult');
-    if (!button) {
-      return { ok: false, actionPlan, results, verification: { ok: false, reason: 'complete_button_not_found' }, failed: { reason: 'complete_button_not_found' } };
-    }
-    button.click();
-    await wait(350);
-    results.push({ ok: true, selector: selectorForNode(button), reason: 'complete_service_clicked' });
+  } else if (actionPlan.intent === 'save_record' || actionPlan.intent === 'complete_service') {
+    return {
+      ok: false,
+      actionPlan,
+      results,
+      verification: { ok: false, reason: actionPlan.requires_confirmation ? 'confirmation_required' : 'save_blocked' },
+      failed: { reason: actionPlan.requires_confirmation ? 'confirmation_required' : 'save_blocked' }
+    };
   } else if (!(actionPlan.operations || []).length) {
     return {
       ok: false,
@@ -623,17 +781,15 @@ async function executeAgentCommand(command) {
   }
 
   if (/сохрани.*закрой|заверши/.test(normalized)) {
-    const button = document.querySelector('#btnSaveAndCloseInspectionResult');
-    if (!button) return { ok: false, mode: 'direct-dom-command', command, results: [], failed: { reason: 'Save and close button not found' } };
-    button.click();
-    return { ok: true, mode: 'direct-dom-command', command, results: [{ ok: true, selector: '#btnSaveAndCloseInspectionResult' }] };
+    return { ok: false, mode: 'direct-dom-command', command, results: [], failed: { reason: 'confirmation_required' } };
   }
 
   if (/сохрани/.test(normalized)) {
-    const button = document.querySelector('#btnSaveInspectionResult');
-    if (!button) return { ok: false, mode: 'direct-dom-command', command, results: [], failed: { reason: 'Save button not found' } };
-    button.click();
-    return { ok: true, mode: 'direct-dom-command', command, results: [{ ok: true, selector: '#btnSaveInspectionResult' }] };
+    return { ok: false, mode: 'direct-dom-command', command, results: [], failed: { reason: 'confirmation_required' } };
+  }
+
+  if (/отмет.*процедур.*выполн|выполнен/.test(normalized)) {
+    return { ok: false, mode: 'direct-dom-command', command, results: [], failed: { reason: 'confirmation_required' } };
   }
 
   return {
@@ -819,6 +975,66 @@ function applyCheckboxGroup(operation, node) {
   };
 }
 
+function fieldValueBySelectors(selectors = [], fallbackTerms = []) {
+  const node = queryVisibleNodes(selectors)[0]
+    || findSemanticNode({ role: 'field', candidateNames: fallbackTerms, labelCandidates: fallbackTerms, legacySelectors: selectors });
+  return node ? valueForNode(node) : '';
+}
+
+function serializeInspectionPayload() {
+  if (inferScreenId() !== 'inspection') {
+    return { ok: false, error: 'inspection_not_open' };
+  }
+  const appointmentId = selectedAppointmentId();
+  const sections = Array.from(document.querySelectorAll('[data-section-key]')).map((sectionNode) => {
+    const sectionKey = sectionNode.getAttribute('data-section-key') || '';
+    const checkboxes = Array.from(sectionNode.querySelectorAll('input[type="checkbox"]'));
+    if (checkboxes.length) {
+      return {
+        section_key: sectionKey,
+        kind: 'checkbox-group',
+        selected_option_keys: checkboxes.filter((node) => node.checked).map((node) => node.dataset.optionKey).filter(Boolean)
+      };
+    }
+    return {
+      section_key: sectionKey,
+      kind: 'text',
+      text: sectionNode.querySelector('textarea')?.value || ''
+    };
+  });
+  const payload = {
+    appointment_id: appointmentId,
+    execute_date: String(fieldValueBySelectors(['#dtpServiceExecuteDate', 'input[data-field-key="dtpserviceexecutedate"]'], ['дата выполнения']) || ''),
+    execute_time: String(fieldValueBySelectors(['#dtpServiceExecuteTime', 'input[data-field-key="dtpserviceexecutetime"]'], ['время выполнения']) || ''),
+    duration_min: Number(fieldValueBySelectors(['#ntbDurationMinute', 'input[data-field-key="ntbdurationminute"]'], ['длительность']) || 30),
+    medical_post_id: String(fieldValueBySelectors(['#cmbExecuteMedicalPost', 'select[data-field-key="cmbexecutemedicalpost"]'], ['медицинский пост']) || ''),
+    service_classifier_id: String(fieldValueBySelectors(['#cmbPerformerService', 'select[data-field-key="cmbperformerservice"]'], ['услуга классификатора']) || ''),
+    service_price_item_id: String(fieldValueBySelectors(['#cmbPerformerServiceMo', 'select[data-field-key="cmbperformerservicemo"]'], ['услуга из прейскуранта']) || ''),
+    medical_form_id: String(fieldValueBySelectors(['#cmbMedicalForm', 'select[data-field-key="cmbmedicalform"]'], ['форма']) || ''),
+    medical_equipment_id: String(fieldValueBySelectors(['#cmbMedicalEquipment', 'select[data-field-key="cmbmedicalequipment"]'], ['медицинское оборудование']) || ''),
+    conclusion_text: String(fieldValueBySelectors(['#tbMedicalFinal', 'textarea[data-field-key="tbmedicalfinal"]'], ['заключение']) || ''),
+    medical_record_sections: sections,
+    supplemental: {
+      specialist_name: String(fieldValueBySelectors(['#supp-specialist'], ['фио специалиста']) || ''),
+      completion_date: String(fieldValueBySelectors(['#supp-completionDate'], ['дата окончания осмотра']) || ''),
+      work_plan: String(fieldValueBySelectors(['#supp-workPlan'], ['план работы']) || ''),
+      planned_sessions: String(fieldValueBySelectors(['#supp-plannedSessions'], ['планируемых занятий']) || ''),
+      completed_sessions: String(fieldValueBySelectors(['#supp-completedSessions'], ['проведенных занятий']) || ''),
+      dynamics: String(fieldValueBySelectors(['#supp-dynamics'], ['динамика развития']) || ''),
+      recommendations: String(fieldValueBySelectors(['#supp-recommendations'], ['рекомендации']) || '')
+    }
+  };
+  return {
+    ok: true,
+    payload,
+    screen_snapshot_hash: hashText(JSON.stringify({
+      appointment_id: appointmentId,
+      active_tab: activeTabKey(),
+      payload
+    }))
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ping') {
     sendResponse({ ok: true, screen_id: inferScreenId() });
@@ -826,9 +1042,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'get-screen-context') {
+    const screenState = inferScreenState();
     sendResponse({
-      screen_id: inferScreenId(),
-      screen_type: inferScreenId(),
+      screen_id: screenState.screen_id,
+      screen_type: screenState.screen_id,
       url: window.location.href,
       visible_tabs: visibleTabs(),
       visible_actions: visibleButtonActions(),
@@ -838,8 +1055,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       selected_patient_id: selectedPatientId(),
       selected_patient_name: selectedPatientName(),
       selected_appointment_id: selectedAppointmentId(),
+      screen_confidence: screenState.confidence,
+      screen_evidence: screenState.evidence,
+      active_semantic_regions: screenState.active_regions,
+      form_snapshot_hash: serializeInspectionPayload().ok ? serializeInspectionPayload().screen_snapshot_hash : '',
       dom_version: 'sandbox-v1'
     });
+    return true;
+  }
+
+  if (message.type === 'serialize-inspection-form') {
+    sendResponse(serializeInspectionPayload());
     return true;
   }
 

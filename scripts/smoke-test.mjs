@@ -5,6 +5,8 @@ import { getOpenAiSttConfig, normalizeOpenAiAudioMimeType } from '../lib/openai-
 import { normalizeTranscript as normalizeCanonicalTranscript } from '../lib/transcript-normalizer.mjs';
 import {
   buildProcedureSchedulePreview,
+  commitConfirmedInspectionSave,
+  createSaveConfirmation,
   getDeepgramRealtimeConfig,
   inferPatapimSpeakerRole,
   ingestTranscript,
@@ -69,6 +71,9 @@ assert.ok(artifacts.screen_inventory.some((screen) => screen.screen_id === 'sche
 assert.ok(artifacts.screen_inventory.some((screen) => screen.screen_id === 'inspection'));
 assert.ok(artifacts.field_map.some((field) => field.dom_id === 'tbMedicalFinal'));
 assert.ok(artifacts.locator_registry.some((locator) => locator.preferred_selector === '#frmInspectionResult'));
+assert.ok(artifacts.locator_registry.some((locator) => locator.semantic_role === 'form'));
+assert.ok(artifacts.locator_registry.some((locator) => Array.isArray(locator.legacy_selectors)));
+assert.ok(artifacts.locator_registry.some((locator) => Array.isArray(locator.candidate_names)));
 assert.ok(artifacts.navigation_targets.some((target) => target.target_key === 'discharge_summary'));
 assert.ok(artifacts.process_steps.some((step) => step.step_key === 'inspection_fill'));
 assert.equal(runtime.scheduleDays.length, 9);
@@ -429,6 +434,73 @@ const applyDraftPreview = previewCommand({
   }
 });
 assert.equal(applyDraftPreview.intent.type, 'apply_current_draft');
+
+const savePreview = previewCommand({
+  command: 'сохрани запись',
+  runtime,
+  screenContext: {
+    screen_id: 'inspection',
+    selected_appointment_id: firstSlot.appointment_id
+  }
+});
+assert.equal(savePreview.intent.type, 'save_record');
+assert.equal(savePreview.actionPlan.risk_level, 'high');
+assert.equal(savePreview.actionPlan.requires_preview, true);
+assert.equal(savePreview.actionPlan.requires_confirmation, true);
+assert.equal(savePreview.domOperations.length, 0);
+assert.ok(/подтвержд/i.test(savePreview.explanation));
+
+const completeServicePreview = previewCommand({
+  command: 'отметь процедуру выполненной',
+  runtime,
+  screenContext: {
+    screen_id: 'inspection',
+    selected_appointment_id: firstSlot.appointment_id
+  }
+});
+assert.equal(completeServicePreview.intent.type, 'complete_service');
+assert.equal(completeServicePreview.actionPlan.risk_level, 'high');
+assert.equal(completeServicePreview.actionPlan.requires_preview, true);
+assert.equal(completeServicePreview.actionPlan.requires_confirmation, true);
+assert.equal(completeServicePreview.actionPlan.actionTarget, 'save-and-close');
+assert.equal(completeServicePreview.domOperations.length, 0);
+assert.ok(/подтвержд/i.test(completeServicePreview.explanation));
+
+const confirmationPayload = {
+  ...runtime.appointments[firstSlot.appointment_id].inspection_draft,
+  conclusion_text: 'Контрольная запись перед сохранением.',
+  supplemental: {
+    ...runtime.appointments[firstSlot.appointment_id].inspection_draft.supplemental,
+    recommendations: 'Продолжить домашние упражнения.'
+  }
+};
+const confirmation = createSaveConfirmation(runtime, {
+  appointmentId: firstSlot.appointment_id,
+  actionTarget: 'save',
+  inspectionPayload: confirmationPayload,
+  screenSnapshotHash: 'snapshot-1',
+  actionSource: 'test'
+});
+assert.equal(confirmation.status, 'pending');
+assert.equal(confirmation.action_type, 'save');
+assert.ok(confirmation.preview_hash);
+assert.throws(
+  () => commitConfirmedInspectionSave(runtime, {
+    appointmentId: firstSlot.appointment_id,
+    confirmationId: confirmation.confirmation_id,
+    inspectionPayload: confirmationPayload,
+    screenSnapshotHash: 'snapshot-2'
+  }),
+  /invalidated by screen changes/i
+);
+const committedSave = commitConfirmedInspectionSave(runtime, {
+  appointmentId: firstSlot.appointment_id,
+  confirmationId: confirmation.confirmation_id,
+  inspectionPayload: confirmationPayload,
+  screenSnapshotHash: 'snapshot-1'
+});
+assert.equal(committedSave.confirmation.status, 'confirmed');
+assert.equal(committedSave.appointment.inspection_draft.conclusion_text, 'Контрольная запись перед сохранением.');
 
 const deepgramConfig = getDeepgramRealtimeConfig('demo-key');
 assert.equal(deepgramConfig.provider, 'deepgram');
