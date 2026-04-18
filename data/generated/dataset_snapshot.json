@@ -6,11 +6,9 @@
       "patient": "/mnt/data/unzipped/patient",
       "history": "/mnt/data/unzipped/history"
     },
-    "consultDir": "/Users/abdra/Downloads/Консультация и диагностика",
-    "patientDir": "/Users/abdra/Downloads/Консультация и диагностика",
-    "historyPath": "/Users/abdra/Downloads/История болезней.zip",
-    "consultationHtml": "/Users/abdra/Downloads/Консультация и диагностика/КЃ≠бгЂмв†ж®п ® §®†£≠Ѓбв®™†.html",
-    "patientHtml": "/Users/abdra/Downloads/Консультация и диагностика/РАХМЕТОЛЛА АЙЫ - Dmed.Св†ж®Ѓ≠†а.html",
+    "consultDir": "C:\\Users\\LENOVO\\Downloads\\Консультация и диагностика",
+    "patientDir": "C:\\Users\\LENOVO\\Downloads\\Консультация и диагностика",
+    "historyPath": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
     "usingFallbacks": {
       "consult": true,
       "patient": true,
@@ -40,63 +38,63 @@
     },
     {
       "artifact_id": "history-1",
-      "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+      "source_archive": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
       "artifact_type": "pdf",
-      "original_path": "�?а�?а�?ои�?�?ин �?м�?е �?�?С.pdf",
-      "normalized_name": "�?а�?а�?ои�?�?ин �?м�?е �?�?С.pdf",
+      "original_path": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip\\РђР±Р°РёМ† РђРјРёРЅР°  Р‘СЂРѕРЅС…РёС‚.pdf",
+      "normalized_name": "РђР±Р°РёМ† РђРјРёРЅР°  Р‘СЂРѕРЅС…РёС‚.pdf",
       "patient_scope": "history",
       "screen_scope": "history",
-      "notes": "History item discovered from zip archive listing"
+      "notes": "Official mounted history artifact"
     },
     {
       "artifact_id": "history-2",
-      "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+      "source_archive": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
       "artifact_type": "pdf",
-      "original_path": "�?аза�?�?ан �?и�?а�?  �?�?�?изм.pdf",
-      "normalized_name": "�?аза�?�?ан �?и�?а�?  �?�?�?изм.pdf",
+      "original_path": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip\\РђС…РјРµРґРёСЏСЂ Р†ТЈРєУ™СЂ   Р”Р’Р“.pdf",
+      "normalized_name": "РђС…РјРµРґРёСЏСЂ Р†ТЈРєУ™СЂ   Р”Р’Р“.pdf",
       "patient_scope": "history",
       "screen_scope": "history",
-      "notes": "History item discovered from zip archive listing"
+      "notes": "Official mounted history artifact"
     },
     {
       "artifact_id": "history-3",
-      "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+      "source_archive": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
       "artifact_type": "pdf",
-      "original_path": "Тем�?�?баи�? �?и�?ба�? �?�?�?ма.pdf",
-      "normalized_name": "Тем�?�?баи�? �?и�?ба�? �?�?�?ма.pdf",
+      "original_path": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip\\РќТ±СЂР±У©Р»РµРєТ±Р»С‹ РќТ±СЂУ™Р»Рё   Р¦РµСЂРµР±СЂР°Р»СЊРЅС‹РёМ† РїР°СЂР°Р»РёС‡.pdf",
+      "normalized_name": "РќТ±СЂР±У©Р»РµРєТ±Р»С‹ РќТ±СЂУ™Р»Рё   Р¦РµСЂРµР±СЂР°Р»СЊРЅС‹РёМ† РїР°СЂР°Р»РёС‡.pdf",
       "patient_scope": "history",
       "screen_scope": "history",
-      "notes": "History item discovered from zip archive listing"
+      "notes": "Official mounted history artifact"
     },
     {
       "artifact_id": "history-4",
-      "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+      "source_archive": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
       "artifact_type": "pdf",
-      "original_path": "�?ұ�?бөлекұл�? �?ұ�?�?ли   Це�?еб�?ал�?н�?и�? па�?али�?.pdf",
-      "normalized_name": "�?ұ�?бөлекұл�? �?ұ�?�?ли   Це�?еб�?ал�?н�?и�? па�?али�?.pdf",
+      "original_path": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip\\РўРµРјС–СЂР±Р°РёМ† РђРёМ†Р±Р°С‚ РђСЃС‚РјР°.pdf",
+      "normalized_name": "РўРµРјС–СЂР±Р°РёМ† РђРёМ†Р±Р°С‚ РђСЃС‚РјР°.pdf",
       "patient_scope": "history",
       "screen_scope": "history",
-      "notes": "History item discovered from zip archive listing"
+      "notes": "Official mounted history artifact"
     },
     {
       "artifact_id": "history-5",
-      "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+      "source_archive": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
       "artifact_type": "pdf",
-      "original_path": "�?�?меди�?�? �?ңк�?�?   �?�?�?.pdf",
-      "normalized_name": "�?�?меди�?�? �?ңк�?�?   �?�?�?.pdf",
+      "original_path": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip\\Р‘Р°Р·Р°СЂС…Р°РЅ РњРёСЂР°СЃ  РђСѓС‚РёР·Рј.pdf",
+      "normalized_name": "Р‘Р°Р·Р°СЂС…Р°РЅ РњРёСЂР°СЃ  РђСѓС‚РёР·Рј.pdf",
       "patient_scope": "history",
       "screen_scope": "history",
-      "notes": "History item discovered from zip archive listing"
+      "notes": "Official mounted history artifact"
     },
     {
       "artifact_id": "history-6",
-      "source_archive": "/Users/abdra/Downloads/История болезней.zip",
+      "source_archive": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip",
       "artifact_type": "pdf",
-      "original_path": "�?баи�? �?мина  �?�?он�?и�?.pdf",
-      "normalized_name": "�?баи�? �?мина  �?�?он�?и�?.pdf",
+      "original_path": "C:\\Users\\LENOVO\\Downloads\\damumed\\.tmp_history_zip\\ТљР°СЂР°Т›РѕРёМ†С€РёРЅ РђРјСЂРµ Р’РџРЎ.pdf",
+      "normalized_name": "ТљР°СЂР°Т›РѕРёМ†С€РёРЅ РђРјСЂРµ Р’РџРЎ.pdf",
       "patient_scope": "history",
       "screen_scope": "history",
-      "notes": "History item discovered from zip archive listing"
+      "notes": "Official mounted history artifact"
     }
   ],
   "screen_inventory": [

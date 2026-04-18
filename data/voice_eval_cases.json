@@ -15,20 +15,19 @@
     { "text": "открой рахметолла", "patientId": "patient-1" },
     { "text": "открой айкуним", "patientId": "patient-1" },
     { "text": "найди рахметула айкуным", "patientId": "patient-1" },
-    { "text": "открой темирбай", "patientId": "patient-3" },
-    { "text": "открой нуржан", "patientId": "patient-3" },
-    { "text": "к нуржану перейди", "patientId": "patient-3" },
-    { "text": "перейди к куттыбекулы", "patientId": "patient-4" },
-    { "text": "найди нурали", "patientId": "patient-4" },
-    { "text": "открой амина", "patientId": "patient-6" },
-    { "text": "найди каракойшин", "patientId": "patient-2" },
-    { "text": "открой анкар", "patientId": "patient-5" },
-    { "text": "otkroi nurzhan", "patientId": "patient-3" },
+    { "text": "открой темирбай", "patientId": "patient-history-4" },
+    { "text": "открой айбат", "patientId": "patient-history-4" },
+    { "text": "перейди к нурали", "patientId": "patient-history-3" },
+    { "text": "найди нурали", "patientId": "patient-history-3" },
+    { "text": "открой амина", "patientId": "patient-history-1" },
+    { "text": "найди каракойшин", "patientId": "patient-history-6" },
+    { "text": "открой анкар", "patientId": "patient-history-2" },
+    { "text": "otkroi temirbay", "patientId": "patient-history-4" },
     { "text": "rahmetolla aikunim", "patientId": "patient-1" }
   ],
   "ambiguous": [
-    { "text": "открой нур", "status": "ambiguous" },
-    { "text": "открой пациента", "status": "not_found" }
+    { "text": "открой пациента", "status": "not_found" },
+    { "text": "открой а", "status": "not_found" }
   ],
   "falseTriggers": [
     "у меня болит голова",
