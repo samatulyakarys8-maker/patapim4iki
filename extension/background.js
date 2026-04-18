@@ -126,6 +126,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === 'refresh-context') {
       const screenContext = await getScreenContext(tab.id);
+      // Broadcast to other extension parts (sidepanel)
+      chrome.runtime.sendMessage({ type: 'context-updated', screenContext }).catch(() => null);
       sendResponse({ ok: true, screenContext });
       return;
     }

@@ -300,20 +300,46 @@ function patientScopedScreenId() {
   return screenId;
 }
 
+let lastInteractedPatient = null;
+
+document.addEventListener('mousedown', (event) => {
+  const card = event.target.closest('.slot-card');
+  if (card) {
+    const patientId = card.getAttribute('data-patient-id');
+    const patientName = card.getAttribute('data-patient-name');
+    if (patientId) {
+      lastInteractedPatient = { id: patientId, name: patientName };
+      // Notify extension to refresh sidepanel context
+      chrome.runtime.sendMessage({ type: 'refresh-context' }).catch(() => null);
+    }
+  }
+}, true);
+
 function selectedPatientId() {
   const screenId = patientScopedScreenId();
-  if (!screenId) return null;
-  return document.querySelector(`[data-screen="${cssEscape(screenId)}"][data-patient-id]`)?.getAttribute('data-patient-id')
-    || document.querySelector('[data-patient-id]')?.getAttribute('data-patient-id')
-    || null;
+  if (screenId) {
+    return document.querySelector(`[data-screen="${cssEscape(screenId)}"][data-patient-id]`)?.getAttribute('data-patient-id')
+      || document.querySelector('[data-patient-id]')?.getAttribute('data-patient-id')
+      || null;
+  }
+  // On schedule screen or other non-scoped screens, fallback to last clicked slot
+  if (inferScreenId() === 'schedule' && lastInteractedPatient?.id) {
+    return lastInteractedPatient.id;
+  }
+  return null;
 }
 
 function selectedPatientName() {
   const screenId = patientScopedScreenId();
-  if (!screenId) return null;
-  return document.querySelector(`[data-screen="${cssEscape(screenId)}"][data-patient-name]`)?.getAttribute('data-patient-name')
-    || document.querySelector('[data-patient-name]')?.getAttribute('data-patient-name')
-    || null;
+  if (screenId) {
+    return document.querySelector(`[data-screen="${cssEscape(screenId)}"][data-patient-name]`)?.getAttribute('data-patient-name')
+      || document.querySelector('[data-patient-name]')?.getAttribute('data-patient-name')
+      || null;
+  }
+  if (inferScreenId() === 'schedule' && lastInteractedPatient?.name) {
+    return lastInteractedPatient.name;
+  }
+  return null;
 }
 
 function activeTabKey() {

@@ -247,7 +247,8 @@ function renderWorkspaceDeck() {
     : 'Откройте карточку приема, чтобы загрузить документы и применить профильные пресеты в черновик.';
   assetCountEl.textContent = String(state.patientAssets.length || 0);
   presetCountEl.textContent = String(state.patientPresets.length || 0);
-  assetUploadInputEl.disabled = !canUseAssets;
+  
+  assetUploadInputEl.disabled = false;
   refreshWorkspaceEl.disabled = !canUseAssets;
 
   assetListEl.replaceChildren();
@@ -301,7 +302,6 @@ function renderWorkspaceDeck() {
     }
   }
 }
-
 function appendMessage({ role = 'assistant', title = '', body = '', cards = [], tone = '' }) {
   const article = document.createElement('article');
   article.className = ['message', role, tone].filter(Boolean).join(' ');
@@ -1731,6 +1731,12 @@ function initEvents() {
     if (event.code === 'Space' && document.activeElement !== chatInputEl && state.breakModeWidget?.isVisible()) {
       event.preventDefault();
       state.breakModeWidget.jump();
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'context-updated') {
+      loadWorkspaceData({ screenContext: message.screenContext, silent: true }).catch(console.error);
     }
   });
 }

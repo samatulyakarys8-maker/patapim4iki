@@ -122,32 +122,44 @@ export function createBreakModeWidget({
     updateHud();
   }
 
-  function tick() {
+  let lastTime = 0;
+  const frameTime = 1000 / 60;
+
+  function tick(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const elapsed = timestamp - lastTime;
+
     if (state.visible && state.running && !state.gameOver) {
-      state.frame += 1;
-      state.velocity += BREAK_WIDGET_DEFAULTS.gravity;
-      state.birdY += state.velocity;
+      if (elapsed >= frameTime) {
+        lastTime = timestamp - (elapsed % frameTime);
+        
+        state.frame += 1;
+        state.velocity += BREAK_WIDGET_DEFAULTS.gravity;
+        state.birdY += state.velocity;
 
-      if (state.frame % BREAK_WIDGET_DEFAULTS.spawnEveryFrames === 0) {
-        spawnPipe();
-      }
-
-      state.pipes = state.pipes.filter((pipe) => pipe.x + BREAK_WIDGET_DEFAULTS.pipeWidth > -10);
-      for (const pipe of state.pipes) {
-        pipe.x -= BREAK_WIDGET_DEFAULTS.pipeSpeed;
-        if (!pipe.passed && pipe.x + BREAK_WIDGET_DEFAULTS.pipeWidth < 56) {
-          pipe.passed = true;
-          state.score += 1;
-          updateHud();
+        if (state.frame % BREAK_WIDGET_DEFAULTS.spawnEveryFrames === 0) {
+          spawnPipe();
         }
-        if (collide(pipe)) {
+
+        state.pipes = state.pipes.filter((pipe) => pipe.x + BREAK_WIDGET_DEFAULTS.pipeWidth > -10);
+        for (const pipe of state.pipes) {
+          pipe.x -= BREAK_WIDGET_DEFAULTS.pipeSpeed;
+          if (!pipe.passed && pipe.x + BREAK_WIDGET_DEFAULTS.pipeWidth < 56) {
+            pipe.passed = true;
+            state.score += 1;
+            updateHud();
+          }
+          if (collide(pipe)) {
+            stopGame();
+          }
+        }
+
+        if (state.birdY < 0 || state.birdY + 18 > height - 10) {
           stopGame();
         }
       }
-
-      if (state.birdY < 0 || state.birdY + 18 > height - 10) {
-        stopGame();
-      }
+    } else {
+      lastTime = timestamp;
     }
 
     draw();

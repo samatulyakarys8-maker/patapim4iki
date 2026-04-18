@@ -2,12 +2,12 @@ export const BREAK_MODE_COMMANDS = ['play game', 'break mode'];
 export const BREAK_MODE_LAYOUT = 'overlay';
 export const BREAK_WIDGET_DEFAULTS = {
   minHeight: 420,
-  gravity: 0.28,
-  flapVelocity: -4.5,
-  pipeSpeed: 1.9,
-  pipeGap: 96,
-  pipeWidth: 36,
-  spawnEveryFrames: 126
+  gravity: 0.2,
+  flapVelocity: -4.0,
+  pipeSpeed: 1.8,
+  pipeGap: 120,
+  pipeWidth: 32,
+  spawnEveryFrames: 140
 };
 
 export function normalizeBreakModeCommand(value = '') {
