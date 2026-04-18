@@ -86,7 +86,7 @@ select:focus-visible {
   height: 100vh;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   gap: 12px;
   padding: 14px;
   overflow: hidden;
@@ -123,6 +123,173 @@ h1 {
   margin: 8px 0 0;
   color: var(--muted-foreground);
   line-height: 1.35;
+}
+
+.workspace-deck {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.workspace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspace-kicker {
+  margin: 0 0 4px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workspace-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.workspace-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.workspace-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-chip {
+  min-width: 0;
+  flex: 1 1 110px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--secondary);
+}
+
+.workspace-chip-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workspace-card {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+}
+
+.workspace-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-card-head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.workspace-counter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-empty {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.workspace-item {
+  display: grid;
+  gap: 6px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.workspace-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-item-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.workspace-item-meta,
+.workspace-item-copy {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workspace-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .chat-timeline {
@@ -554,6 +721,18 @@ button:disabled {
 @media (max-width: 380px) {
   .app-header {
     flex-direction: column;
+  }
+
+  .workspace-header {
+    flex-direction: column;
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-actions {
+    justify-content: stretch;
   }
 
   .composer-toolbar {

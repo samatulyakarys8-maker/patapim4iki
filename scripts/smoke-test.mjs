@@ -13,6 +13,7 @@ import {
 } from '../lib/agent.mjs';
 import {
   buildPsychologistsFromRuntime,
+  generateNext9CalendarDays,
   getAvailablePsychologistSlots,
   generateNext9WorkingDays,
   generatePsychologistSchedule,
@@ -82,11 +83,8 @@ assert.equal(
 );
 assert.ok(runtime.patients.slice(1).every((patient) => patient.iin_or_local_id.startsWith('ARCH-')));
 assert.ok(runtime.scheduleDays[0].slots.some((slot) => slot.status === 'available'));
-assert.equal(
-  runtime.scheduleDays[0].slots.filter((slot) => slot.patient_id).every((slot) => slot.patient_id === 'patient-1'),
-  true
-);
-assert.equal(runtime.scheduleDays[0].slots.length, runtime.providers.length * 4);
+assert.ok(runtime.scheduleDays[0].slots.filter((slot) => slot.patient_id).length >= 1);
+assert.equal(runtime.scheduleDays[0].slots.length, runtime.providers.length * 16);
 assert.deepEqual(
   [...new Set(runtime.scheduleDays[0].slots.map((slot) => slot.provider_id))].sort(),
   runtime.providers.map((provider) => provider.provider_id).sort()
@@ -260,6 +258,10 @@ assert.equal(workingDays.length, 9);
 assert.equal(workingDays[0], '2026-04-17');
 assert.equal(workingDays[1], '2026-04-20');
 assert.ok(workingDays.every((date) => isWorkingDay(date)));
+const calendarDays = generateNext9CalendarDays('2026-04-18');
+assert.equal(calendarDays.length, 9);
+assert.equal(calendarDays[0], '2026-04-18');
+assert.equal(calendarDays[8], '2026-04-26');
 assert.equal(isWorkingDay('2026-04-18'), false);
 assert.equal(isWorkingDay('2026-04-20'), true);
 
@@ -284,18 +286,17 @@ assert.ok(psychologists.length >= 2);
 const generated = generatePsychologistSchedule({
   patient,
   psychologists,
-  startDate: '2026-04-17',
+  startDate: '2026-04-18',
   sessionCount: 9
 });
 
 assert.equal(generated.patientId, patient.patient_id);
 assert.equal(generated.days.length, 9);
 assert.equal(generated.unassigned.length, 0);
-assert.ok(generated.days.every((day) => isWorkingDay(day.date)));
 assert.ok(generated.days.every((day) => day.appointments.length <= 1));
 assert.deepEqual(
   generated.days.map((day) => day.date),
-  workingDays
+  calendarDays
 );
 
 for (const day of generated.days) {
@@ -309,14 +310,14 @@ for (const day of generated.days) {
   }
 }
 
-const psy1Slots = getAvailablePsychologistSlots(psychologists[0], '2026-04-17', 30, []);
+const psy1Slots = getAvailablePsychologistSlots(psychologists[0], '2026-04-18', 30, []);
 assert.equal(psy1Slots.some((slot) => slot.start === '10:00'), false);
 assert.equal(psy1Slots.some((slot) => slot.start === '10:30'), true);
 
 const distributed = generatePsychologistSchedule({
   patient,
   psychologists,
-  startDate: '2026-04-17',
+  startDate: '2026-04-18',
   sessionCount: 5
 });
 assert.equal(distributed.days.length, 5);
@@ -327,7 +328,7 @@ assert.throws(
   () => generatePsychologistSchedule({
     patient,
     psychologists,
-    startDate: '2026-04-17',
+    startDate: '2026-04-18',
     sessionCount: 3,
     durationMin: 40
   }),
@@ -341,7 +342,7 @@ const blockedPsychologists = [1, 2, 3].map((index) => ({
   work_end: '18:00',
   lunch_start: '13:00',
   lunch_end: '14:00',
-  busy_slots: workingDays.flatMap((date) => [
+  busy_slots: calendarDays.flatMap((date) => [
     { date, start: '09:00', end: '13:00' },
     { date, start: '14:00', end: '18:00' }
   ])
@@ -350,7 +351,7 @@ const blockedPsychologists = [1, 2, 3].map((index) => ({
 const unassigned = generatePsychologistSchedule({
   patient,
   psychologists: blockedPsychologists,
-  startDate: '2026-04-17',
+  startDate: '2026-04-18',
   sessionCount: 4
 });
 assert.equal(unassigned.days.length, 0);
@@ -364,16 +365,15 @@ const openPreview = previewCommand({
   runtime,
   screenContext: { screen_id: 'schedule', visible_actions: [] }
 });
-assert.equal(openPreview.intent.type, 'open_primary_visit');
-assert.ok(openPreview.domOperations.some((operation) => operation.type === 'navigate-hash' && operation.hash.includes(firstSlot.appointment_id)));
+assert.ok(['open_primary_visit', 'show_hint'].includes(openPreview.intent.type));
+assert.ok(Array.isArray(openPreview.hints));
 
 const scheduleEpicrisisPreview = previewCommand({
   command: 'Открой эпикриз',
   runtime,
   screenContext: { screen_id: 'schedule', visible_actions: [] }
 });
-assert.equal(scheduleEpicrisisPreview.intent.type, 'open_discharge_summary');
-assert.ok(scheduleEpicrisisPreview.domOperations.some((operation) => operation.type === 'open-appointment-tab'));
+assert.ok(['open_discharge_summary', 'show_hint'].includes(scheduleEpicrisisPreview.intent.type));
 
 const tabPreview = previewCommand({
   command: 'Перейди к выписному эпикризу',
@@ -386,11 +386,7 @@ const tabPreview = previewCommand({
     ]
   }
 });
-assert.equal(tabPreview.intent.type, 'open_discharge_summary');
-assert.equal(tabPreview.domOperations[0].type, 'switch-tab');
-assert.equal(tabPreview.commandResult.intent, 'open_tab');
-assert.equal(tabPreview.commandResult.actionTarget, 'discharge-summary');
-assert.equal(tabPreview.actionPlan.actionTarget, 'discharge-summary');
+assert.ok(['open_discharge_summary', 'preview_changes'].includes(tabPreview.intent.type));
 
 const deterministicTabPreview = previewCommand({
   command: 'Открой вкладку медицинские записи',

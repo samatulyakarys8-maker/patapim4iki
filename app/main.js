@@ -1,6 +1,7 @@
 ﻿const state = {
   bootstrap: null,
   scheduleDay: null,
+  scheduleWindow: [],
   appointmentBundle: null,
   hints: [],
   auditEntries: [],
@@ -77,6 +78,106 @@ function formatPersonName(value) {
   return normalized.replace(/(^|[\s-])([\p{L}])/gu, (match, prefix, letter) => `${prefix}${letter.toLocaleUpperCase('kk-KZ')}`);
 }
 
+function formatScheduleDate(dateValue, options = { day: '2-digit', month: 'short' }) {
+  if (!dateValue) return '';
+  const date = new Date(`${dateValue}T00:00:00`);
+  return new Intl.DateTimeFormat('ru-RU', options).format(date);
+}
+
+function formatScheduleWeekday(dateValue) {
+  if (!dateValue) return '';
+  const date = new Date(`${dateValue}T00:00:00`);
+  return new Intl.DateTimeFormat('ru-RU', { weekday: 'short' }).format(date).replace('.', '');
+}
+
+function getScheduleWindowItem(dateValue = state.scheduleDay?.date) {
+  return (state.scheduleWindow || []).find((day) => day.date === dateValue) || null;
+}
+
+function getActiveScheduleSummary() {
+  return getScheduleWindowItem(state.scheduleDay?.date) || {
+    date: state.scheduleDay?.date || '',
+    slotsCount: 0,
+    occupiedCount: 0,
+    availableCount: 0,
+    completedCount: 0,
+    scheduledCount: 0,
+    providerCount: state.bootstrap?.providers?.length || 0,
+    occupancyRate: 0
+  };
+}
+
+function getScheduleRangeLabel() {
+  if (!state.scheduleWindow?.length) return '';
+  const first = state.scheduleWindow[0]?.date;
+  const last = state.scheduleWindow[state.scheduleWindow.length - 1]?.date;
+  if (!first || !last) return '';
+  return `${formatScheduleDate(first, { day: '2-digit', month: 'short' })} — ${formatScheduleDate(last, { day: '2-digit', month: 'short' })}`;
+}
+
+function getAdjacentScheduleDate(offset) {
+  const days = state.scheduleWindow || [];
+  if (!days.length) return state.scheduleDay?.date || state.bootstrap?.currentDate || '';
+  const currentIndex = Math.max(0, days.findIndex((day) => day.date === state.scheduleDay?.date));
+  const nextIndex = Math.min(days.length - 1, Math.max(0, currentIndex + offset));
+  return days[nextIndex]?.date || days[currentIndex]?.date || state.scheduleDay?.date || '';
+}
+
+function renderScheduleOverview(mode = 'schedule') {
+  const summary = getActiveScheduleSummary();
+  const dayCount = state.scheduleWindow?.length || 0;
+  const sectionTitle = mode === 'board'
+    ? '\u0413\u043e\u0440\u0438\u0437\u043e\u043d\u0442 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f'
+    : '\u041e\u0431\u0437\u043e\u0440 \u043d\u0430 9 \u0434\u043d\u0435\u0439';
+  const sectionCopy = mode === 'board'
+    ? '\u0412\u0441\u0435 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0438 \u0438 \u0441\u043b\u043e\u0442\u044b \u043f\u043e \u0435\u0434\u0438\u043d\u043e\u043c\u0443 runtime.'
+    : '\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u0434\u0435\u043d\u044c \u0432\u044b\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044f \u0438\u0437 \u043e\u0431\u0449\u0435\u0439 9-\u0434\u043d\u0435\u0432\u043d\u043e\u0439 \u0441\u0435\u0442\u043a\u0438.';
+
+  return `
+    <section class="card overview-card">
+      <div class="overview-head">
+        <div>
+          <h3>${sectionTitle}</h3>
+          <p class="overview-copy">${sectionCopy}</p>
+        </div>
+        <div class="overview-range">
+          <span class="meta-pill">${escapeHtml(getScheduleRangeLabel())}</span>
+        </div>
+      </div>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <span class="kpi-label">\u0413\u043e\u0440\u0438\u0437\u043e\u043d\u0442</span>
+          <strong>${escapeHtml(String(dayCount))}</strong>
+          <span class="kpi-meta">\u043a\u0430\u043b\u0435\u043d\u0434\u0430\u0440\u043d\u044b\u0445 \u0434\u043d\u0435\u0439</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">\u0417\u0430\u043d\u044f\u0442\u043e\u0441\u0442\u044c</span>
+          <strong>${escapeHtml(String(summary.occupancyRate || 0))}%</strong>
+          <span class="kpi-meta">${escapeHtml(String(summary.occupiedCount || 0))} / ${escapeHtml(String(summary.slotsCount || 0))} \u043e\u043a\u043e\u043d</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e</span>
+          <strong>${escapeHtml(String(summary.availableCount || 0))}</strong>
+          <span class="kpi-meta">\u0434\u043b\u044f \u043d\u043e\u0432\u044b\u0445 \u0437\u0430\u043f\u0438\u0441\u0435\u0439</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">\u041f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0438</span>
+          <strong>${escapeHtml(String(summary.providerCount || state.bootstrap?.providers?.length || 0))}</strong>
+          <span class="kpi-meta">\u0432 \u0440\u0430\u0431\u043e\u0442\u0435 \u043d\u0430 \u0434\u0430\u0442\u0443</span>
+        </article>
+      </div>
+      <div class="day-rail">
+        ${(state.scheduleWindow || []).map((day) => `
+          <button class="day-rail-item ${day.isActive ? 'active' : ''}" data-action="select-schedule-day" data-date="${escapeHtml(day.date)}">
+            <span class="day-rail-label">${escapeHtml(formatScheduleWeekday(day.date))}</span>
+            <strong>${escapeHtml(formatScheduleDate(day.date, { day: '2-digit', month: '2-digit' }))}</strong>
+            <span class="day-rail-meta">${escapeHtml(String(day.occupiedCount || 0))} / ${escapeHtml(String(day.slotsCount || 0))}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -108,7 +209,8 @@ async function bootstrap() {
   const payload = await api('/api/bootstrap');
   state.bootstrap = payload;
   state.scheduleDay = payload.scheduleDay;
-  state.providerId = payload.providers?.[0]?.provider_id || '';
+  state.scheduleWindow = payload.scheduleWindow || [];
+  state.providerId = state.providerId || payload.providers?.[0]?.provider_id || '';
   state.sourceOfTruth = payload.sourceOfTruth;
   state.scheduleGenerator.startDate = payload.scheduleDay?.date || payload.currentDate || '';
   await loadScheduleGeneratorPatients(payload.patients || []);
@@ -128,8 +230,13 @@ async function refreshAudit() {
 
 async function loadSchedule(date = state.scheduleDay?.date || state.bootstrap?.currentDate, status = state.statusFilter) {
   const payload = await api(`/api/schedule?date=${encodeURIComponent(date)}&status=${encodeURIComponent(status)}`);
-  state.scheduleDay = payload;
-  state.scheduleGenerator.startDate = payload.date;
+  state.scheduleDay = payload.scheduleDay || payload;
+  state.scheduleWindow = payload.scheduleWindow || state.scheduleWindow || [];
+  state.bootstrap = {
+    ...state.bootstrap,
+    currentDate: payload.currentDate || state.bootstrap?.currentDate
+  };
+  state.scheduleGenerator.startDate = state.scheduleDay?.date || '';
   if (state.route.screen !== 'board') {
     state.route = { screen: 'schedule', appointmentId: null };
   }
@@ -221,9 +328,18 @@ async function generatePsychologistScheduleRequest() {
       body: JSON.stringify({
         patientId: state.scheduleGenerator.patientId,
         sessionCount: Number(state.scheduleGenerator.sessionCount),
-        startDate: state.scheduleGenerator.startDate || state.scheduleDay?.date || state.bootstrap?.currentDate
+        startDate: state.scheduleGenerator.startDate || state.scheduleDay?.date || state.bootstrap?.currentDate,
+        apply: state.route.screen === 'board'
       })
     });
+
+    if (state.route.screen === 'board') {
+      const firstAppliedDate = state.scheduleGenerator.result?.applied?.[0]?.date;
+      const nextDate = firstAppliedDate || state.scheduleDay?.date || state.bootstrap?.currentDate;
+      state.scheduleWindow = state.scheduleGenerator.result?.scheduleWindow || state.scheduleWindow;
+      await refreshAudit();
+      await loadSchedule(nextDate, state.statusFilter);
+    }
   } catch (error) {
     state.scheduleGenerator.error = error.message || 'Failed to generate schedule.';
   } finally {
@@ -289,6 +405,10 @@ async function saveInspection(closeAfter) {
     service_price_item_id: document.querySelector('#cmbPerformerServiceMo').value,
     medical_form_id: document.querySelector('#cmbMedicalForm').value,
     medical_equipment_id: document.querySelector('#cmbMedicalEquipment').value,
+    complaints_text: document.querySelector('#tbComplaints').value,
+    anamnesis_text: document.querySelector('#tbAnamnesis').value,
+    objective_status_text: document.querySelector('#tbObjectiveStatus').value,
+    appointments_text: document.querySelector('#tbAppointments').value,
     conclusion_text: document.querySelector('#tbMedicalFinal').value,
     medical_record_sections: sections,
     supplemental: {
@@ -323,6 +443,8 @@ function renderOptionList(options, currentValue) {
 function renderPageHeader() {
   const scheduleTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'schedule')?.title || '\u0420\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430';
   const inspectionTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'inspection')?.title || '\u041f\u0440\u0438\u0451\u043c';
+  const rangeLabel = getScheduleRangeLabel();
+  const currentProvider = state.bootstrap?.providers?.find((provider) => provider.provider_id === state.providerId) || state.bootstrap?.providers?.[0];
   const title = state.route.screen === 'inspection'
     ? inspectionTitle
     : state.route.screen === 'board'
@@ -331,8 +453,8 @@ function renderPageHeader() {
   const subtitle = state.route.screen === 'inspection'
     ? formatPersonName(state.appointmentBundle?.patient?.full_name || '')
     : state.route.screen === 'board'
-      ? '\u0412\u0441\u0435 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0438 \u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u044b \u043d\u0430 \u043e\u0434\u043d\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435'
-      : state.bootstrap?.providers?.find((provider) => provider.provider_id === state.providerId)?.schedule_name || state.bootstrap?.providers?.[0]?.schedule_name || '';
+      ? `\u0415\u0434\u0438\u043d\u044b\u0439 \u043e\u043f\u0435\u0440\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0439 \u043e\u0431\u0437\u043e\u0440 • \u041f\u0435\u0440\u0438\u043e\u0434: ${rangeLabel}`
+      : `${currentProvider?.schedule_name || ''}${currentProvider?.schedule_name && rangeLabel ? ' • ' : ''}${rangeLabel ? `\u041f\u0435\u0440\u0438\u043e\u0434: ${rangeLabel}` : ''}`;
   return `
     <section class="card header-bar">
       <div>
@@ -342,7 +464,7 @@ function renderPageHeader() {
       <div class="meta-list">
         <button class="ghost-button" data-action="go-schedule">\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0438</button>
         <button class="ghost-button" data-action="go-board">\u0414\u043e\u0441\u043a\u0430</button>
-        <span class="meta-pill">${escapeHtml(state.scheduleDay?.date || state.bootstrap?.currentDate || '')}</span>
+        <span class="meta-pill">${escapeHtml(formatScheduleDate(state.scheduleDay?.date || state.bootstrap?.currentDate || '', { day: '2-digit', month: 'long', year: 'numeric' }))}</span>
         ${state.route.screen === 'inspection' && state.appointmentBundle
           ? `<span class="status-pill ${escapeHtml(state.appointmentBundle.appointment.status)}">${state.appointmentBundle.appointment.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e'}</span>`
           : ''}
@@ -351,18 +473,20 @@ function renderPageHeader() {
   `;
 }
 
-function renderPsychologistSchedulePanel() {
+function renderPsychologistSchedulePanel(mode = 'preview') {
   const generator = state.scheduleGenerator;
   const patients = generator.patients || [];
   const result = generator.result;
+  const applyMode = mode === 'board';
 
   return `
     <section class="card scheduler-card">
       <div class="scheduler-header">
         <button class="button" data-action="generate-psychologist-schedule" ${generator.loading ? 'disabled' : ''}>
-          ${generator.loading ? '\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435...' : '\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435'}
+          ${generator.loading ? '\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435...' : applyMode ? '\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0432 \u0441\u0435\u0442\u043a\u0443' : '\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435'}
         </button>
       </div>
+      <p class="scheduler-copy">${applyMode ? '\u0410\u0432\u0442\u043e\u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0441\u0440\u0430\u0437\u0443 \u0437\u0430\u043f\u0438\u0448\u0435\u0442 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430 \u0432 \u043e\u0431\u0449\u0443\u044e \u0441\u0435\u0442\u043a\u0443 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u043e\u0432.' : '\u041f\u0440\u0435\u0432\u044c\u044e \u0434\u043b\u044f \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0438\u0447\u0435\u0441\u043a\u0438\u0445 \u0441\u0435\u0430\u043d\u0441\u043e\u0432.'}</p>
       <div class="scheduler-controls">
         <div class="field-group">
           <label for="schedule-generator-patient">\u041f\u0430\u0446\u0438\u0435\u043d\u0442</label>
@@ -426,9 +550,20 @@ function getVisibleScheduleSlots() {
 function renderSchedule() {
   const scheduleDay = state.scheduleDay;
   const visibleSlots = getVisibleScheduleSlots();
+  const summary = getActiveScheduleSummary();
   return `
-    ${renderPsychologistSchedulePanel()}
-    <section class="card" data-screen="schedule">
+    ${renderScheduleOverview('schedule')}
+    <section class="card operations-card" data-screen="schedule">
+      <div class="operations-head">
+        <div>
+          <h3>\u041e\u043f\u0435\u0440\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0439 \u0434\u0435\u043d\u044c</h3>
+          <p class="overview-copy">\u041f\u043e\u0434\u0440\u043e\u0431\u043d\u043e\u0435 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043d\u0430 ${escapeHtml(formatScheduleDate(scheduleDay.date, { day: '2-digit', month: 'long', year: 'numeric' }))}.</p>
+        </div>
+        <div class="meta-list">
+          <span class="badge">\u0417\u0430\u043d\u044f\u0442\u043e: ${escapeHtml(String(summary.occupiedCount || 0))}</span>
+          <span class="badge">\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e: ${escapeHtml(String(summary.availableCount || 0))}</span>
+        </div>
+      </div>
       <div class="controls">
         <div class="field-group wide">
           <label for="dpCalendarDate">\u0414\u0430\u0442\u0430</label>
@@ -458,33 +593,38 @@ function renderSchedule() {
                 <div class="slot-header">
                   <div>
                     <h3>${escapeHtml(formatPersonName(slot.patient?.full_name) || '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e\u0435 \u043e\u043a\u043d\u043e')}</h3>
-                    <div class="slot-subtitle">${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)} \u2022 ${escapeHtml(slot.patient ? slot.service_name : '\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430')}</div>
+                    <div class="slot-subtitle">${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)} • ${escapeHtml(slot.patient ? slot.service_name : '\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430')}</div>
                   </div>
                   <span class="status-pill ${escapeHtml(slot.status)}">${slot.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : slot.status === 'scheduled' ? '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e' : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e'}</span>
                 </div>
                 <div class="patient-tags">
+                  <span class="meta-pill">\u041f\u0441\u0438\u0445\u043e\u043b\u043e\u0433: ${escapeHtml(formatPersonName(state.bootstrap.providers.find((provider) => provider.provider_id === slot.provider_id)?.short_name || state.bootstrap.providers.find((provider) => provider.provider_id === slot.provider_id)?.full_name || ''))}</span>
                   ${slot.patient ? `<span class="meta-pill">\u0418\u0418\u041d: ${escapeHtml(slot.patient.iin_or_local_id)}</span>` : ''}
                   <span class="meta-pill">${escapeHtml(slot.date)}</span>
                 </div>
                 <div class="slot-actions">
-                  ${slot.patient ? `<button class="button" data-action="open-inspection" data-appointment-id="${escapeHtml(slot.appointment_id)}">\u0418\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u044c</button>` : ''}
-                  <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">${slot.patient ? '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u043b\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u044b' : '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430'}</button>
+                  ${slot.patient ? `<button class="button" data-action="open-inspection" data-appointment-id="${escapeHtml(slot.appointment_id)}">\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043f\u0440\u0438\u0451\u043c</button>` : ''}
+                  <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">${slot.patient ? '\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430' : '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430'}</button>
+                  ${slot.patient ? `<button class="ghost-button" data-action="unassign-slot" data-slot-id="${escapeHtml(slot.slot_id)}">\u0421\u043d\u044f\u0442\u044c \u0441 \u043f\u0440\u0438\u0451\u043c\u0430</button>` : ''}
                 </div>
               </li>
-            `).join('') || '<li class="slot-card"><div class="slot-header"><div><h3>\u041d\u0435\u0442 \u0441\u043b\u043e\u0442\u043e\u0432</h3><div class="slot-subtitle">\u0414\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430 \u043d\u0430 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u0443\u044e \u0434\u0430\u0442\u0443 \u0441\u043b\u043e\u0442\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b.</div></div></div></li>'}
+            `).join('') || '<li class="slot-card"><div class="slot-header"><div><h3>\u041d\u0435\u0442 \u0441\u043b\u043e\u0442\u043e\u0432</h3><div class="slot-subtitle">\u0414\u043b\u044f \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0439 \u0434\u0430\u0442\u044b \u0441\u043b\u043e\u0442\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b.</div></div></div></li>'}
           </ul>
         </div>
       </div>
     </section>
   `;
 }
-
 function renderBoard() {
   const scheduleDay = state.scheduleDay;
   const providers = state.bootstrap?.providers || [];
   const timeSlots = [...new Set((scheduleDay?.slots || []).map((slot) => slot.start_time))].sort();
+  const summary = getActiveScheduleSummary();
+  const timeSlotMap = new Map((scheduleDay?.slots || []).map((slot) => [slot.start_time, slot.end_time]));
 
   return `
+    ${renderPsychologistSchedulePanel('board')}
+    ${renderScheduleOverview('board')}
     <section class="card board-card" data-screen="board">
       <div class="controls board-controls">
         <div class="field-group wide">
@@ -492,11 +632,10 @@ function renderBoard() {
           <input id="boardDate" data-action="board-date" type="date" value="${escapeHtml(scheduleDay.date)}" />
         </div>
         <div class="board-summary">
-          <strong>\u041a\u043d\u043e\u043f\u043a\u0438 \u043d\u0430 \u0434\u043e\u0441\u043a\u0435:</strong>
-          <span>\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u2014 \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0432 \u0441\u043b\u043e\u0442.</span>
-          <span>\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u2014 \u0437\u0430\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430.</span>
-          <span>\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u2014 \u043f\u0435\u0440\u0435\u0439\u0442\u0438 \u0432 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043f\u0440\u0438\u0451\u043c\u0430.</span>
-          <span>\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u2014 \u043e\u0441\u0432\u043e\u0431\u043e\u0434\u0438\u0442\u044c \u0441\u043b\u043e\u0442.</span>
+          <span><strong>\u0414\u0435\u043d\u044c:</strong> ${escapeHtml(formatScheduleDate(scheduleDay.date, { day: '2-digit', month: 'long', year: 'numeric' }))}</span>
+          <span><strong>\u0417\u0430\u043d\u044f\u0442\u043e:</strong> ${escapeHtml(String(summary.occupiedCount || 0))}</span>
+          <span><strong>\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e:</strong> ${escapeHtml(String(summary.availableCount || 0))}</span>
+          <span><strong>\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e:</strong> ${escapeHtml(String(summary.completedCount || 0))}</span>
         </div>
         <div class="inline-actions">
           <button class="ghost-button" data-action="go-schedule">\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0438</button>
@@ -504,11 +643,11 @@ function renderBoard() {
         </div>
       </div>
       <div class="board-wrap">
-        <div class="board-grid" style="grid-template-columns: 140px repeat(${providers.length}, minmax(260px, 1fr));">
+        <div class="board-grid" style="grid-template-columns: 140px repeat(${providers.length}, minmax(240px, 1fr));">
           <div class="board-head board-time-head">\u0412\u0440\u0435\u043c\u044f</div>
           ${providers.map((provider) => `<div class="board-head">${escapeHtml(formatPersonName(provider.full_name))}<div class="board-subhead">${escapeHtml(provider.schedule_name)}</div></div>`).join('')}
           ${timeSlots.map((time) => `
-            <div class="board-time-cell">${escapeHtml(time)} - ${escapeHtml(time.replace(':00', ':30'))}</div>
+            <div class="board-time-cell">${escapeHtml(time)} - ${escapeHtml(timeSlotMap.get(time) || time)}</div>
             ${providers.map((provider) => {
               const slot = scheduleDay.slots.find((item) => item.provider_id === provider.provider_id && item.start_time === time);
               return `
@@ -517,7 +656,8 @@ function renderBoard() {
                     <strong>${escapeHtml(slot?.patient ? formatPersonName(slot.patient.full_name) : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e')}</strong>
                     <span class="status-pill ${escapeHtml(slot?.status || 'available')}">${slot?.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : slot?.status === 'scheduled' ? '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e' : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e'}</span>
                   </div>
-                  <div class="board-cell-meta">${slot?.patient ? `\u0418\u0418\u041d: ${escapeHtml(slot.patient.iin_or_local_id)}` : '\u041c\u043e\u0436\u043d\u043e \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430'}</div>
+                  <div class="board-cell-meta">${slot?.patient ? `\u0418\u0418\u041d: ${escapeHtml(slot.patient.iin_or_local_id)}` : '\u0421\u043b\u043e\u0442 \u0433\u043e\u0442\u043e\u0432 \u043a \u043d\u043e\u0432\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438'}</div>
+                  <div class="board-cell-meta">${escapeHtml(slot?.service_name || '\u041a\u043e\u043d\u0441\u0443\u043b\u044c\u0442\u0430\u0446\u0438\u044f: \u041f\u0441\u0438\u0445\u043e\u043b\u043e\u0433')}</div>
                   <div class="board-cell-actions">
                     <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">${slot?.patient ? '\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c' : '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c'}</button>
                     ${slot?.patient ? `<button class="ghost-button" data-action="open-inspection" data-appointment-id="${escapeHtml(slot.appointment_id)}">\u041e\u0442\u043a\u0440\u044b\u0442\u044c</button>` : ''}
@@ -532,7 +672,6 @@ function renderBoard() {
     </section>
   `;
 }
-
 function renderReadonlyTab(title, items, renderer) {
   return `
     <div class="readonly-card" data-document-title="${escapeHtml(title)}">
@@ -598,6 +737,22 @@ function renderInspection() {
           <div class="field-group full">
             <label for="tbMedicalFinal">Заключение</label>
             <textarea id="tbMedicalFinal" name="tbMedicalFinal" rows="5" data-field-key="tbmedicalfinal">${escapeHtml(draft.conclusion_text)}</textarea>
+          </div>
+          <div class="field-group full">
+            <label for="tbComplaints">Жалобы</label>
+            <textarea id="tbComplaints" name="tbComplaints" rows="4" data-field-key="complaints">${escapeHtml(draft.complaints_text || '')}</textarea>
+          </div>
+          <div class="field-group full">
+            <label for="tbAnamnesis">Анамнез</label>
+            <textarea id="tbAnamnesis" name="tbAnamnesis" rows="4" data-field-key="anamnesis">${escapeHtml(draft.anamnesis_text || '')}</textarea>
+          </div>
+          <div class="field-group full">
+            <label for="tbObjectiveStatus">Объективный статус</label>
+            <textarea id="tbObjectiveStatus" name="tbObjectiveStatus" rows="5" data-field-key="objective-status">${escapeHtml(draft.objective_status_text || '')}</textarea>
+          </div>
+          <div class="field-group full">
+            <label for="tbAppointments">Назначения</label>
+            <textarea id="tbAppointments" name="tbAppointments" rows="4" data-field-key="appointments">${escapeHtml(draft.appointments_text || '')}</textarea>
           </div>
           <div class="field-group">
             <label for="supp-specialist">ФИО специалиста</label>
@@ -817,17 +972,15 @@ document.addEventListener('click', async (event) => {
   if (!target) return;
 
   if (target.id === 'btnPrevDay') {
-    const current = new Date(state.scheduleDay.date);
-    current.setDate(current.getDate() - 1);
-    await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: current.toISOString().slice(0, 10) }) });
-    await loadSchedule(current.toISOString().slice(0, 10), state.statusFilter);
+    const previousDate = getAdjacentScheduleDate(-1);
+    await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: previousDate }) });
+    await loadSchedule(previousDate, state.statusFilter);
   }
 
   if (target.id === 'btnNextDay') {
-    const current = new Date(state.scheduleDay.date);
-    current.setDate(current.getDate() + 1);
-    await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: current.toISOString().slice(0, 10) }) });
-    await loadSchedule(current.toISOString().slice(0, 10), state.statusFilter);
+    const nextDate = getAdjacentScheduleDate(1);
+    await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: nextDate }) });
+    await loadSchedule(nextDate, state.statusFilter);
   }
 
   if (target.id === 'btnRefresh') {
@@ -843,6 +996,11 @@ document.addEventListener('click', async (event) => {
   }
   if (action === 'generate-psychologist-schedule') {
     await generatePsychologistScheduleRequest();
+  }
+  if (action === 'select-schedule-day') {
+    const nextDate = target.dataset.date;
+    await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: nextDate }) });
+    await loadSchedule(nextDate, state.statusFilter);
   }
   if (action === 'open-patient-modal') {
     await openPatientModal(target.dataset.slotId);
@@ -927,3 +1085,10 @@ document.addEventListener('input', async (event) => {
 bootstrap().then(clearToastSoon).catch((error) => {
   app.innerHTML = `<pre>${escapeHtml(error.stack || error.message)}</pre>`;
 });
+
+
+
+
+
+
+

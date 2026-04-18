@@ -17,6 +17,58 @@
         <button id="themeToggle" class="icon-button" type="button" aria-label="Переключить тему">Темная</button>
       </header>
 
+      <section id="workspaceDeck" class="workspace-deck" aria-label="Рабочий набор пациента">
+        <div class="workspace-header">
+          <div>
+            <p class="workspace-kicker">Контекст приема</p>
+            <h2 class="workspace-title">Рабочий набор пациента</h2>
+            <p id="workspaceSubtitle" class="workspace-subtitle">Откройте карточку приема, чтобы загрузить документы и использовать профильные пресеты.</p>
+          </div>
+          <div class="workspace-actions">
+            <button id="refreshWorkspace" class="ghost-button" type="button">Обновить</button>
+            <label class="primary-button upload-button" for="assetUploadInput">Загрузить файл</label>
+            <input id="assetUploadInput" type="file" hidden multiple accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp" />
+          </div>
+        </div>
+
+        <div id="workspaceContext" class="workspace-context">
+          <div class="workspace-chip">
+            <span class="workspace-chip-label">Пациент</span>
+            <strong id="workspacePatient">Не выбран</strong>
+          </div>
+          <div class="workspace-chip">
+            <span class="workspace-chip-label">Экран</span>
+            <strong id="workspaceScreen">Нет активной формы</strong>
+          </div>
+          <div class="workspace-chip">
+            <span class="workspace-chip-label">Источник</span>
+            <strong id="workspaceSource">DOM + runtime</strong>
+          </div>
+        </div>
+
+        <div class="workspace-grid">
+          <section class="workspace-card" aria-labelledby="assetListTitle">
+            <div class="workspace-card-head">
+              <h3 id="assetListTitle">Документы и выписки</h3>
+              <span id="assetCount" class="workspace-counter">0</span>
+            </div>
+            <div id="assetList" class="workspace-list">
+              <p class="workspace-empty">Файлы еще не загружены.</p>
+            </div>
+          </section>
+
+          <section class="workspace-card" aria-labelledby="presetListTitle">
+            <div class="workspace-card-head">
+              <h3 id="presetListTitle">Пресеты по контексту</h3>
+              <span id="presetCount" class="workspace-counter">0</span>
+            </div>
+            <div id="presetList" class="workspace-list">
+              <p class="workspace-empty">Пресеты появятся после открытия приема и загрузки документов.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section id="chatTimeline" class="chat-timeline" aria-live="polite"></section>
       <section id="breakModePanel" class="break-mode-panel" hidden>
         <div class="break-mode-topline">

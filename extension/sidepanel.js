@@ -27,6 +27,15 @@ const breakModeBestEl = document.querySelector('#breakModeBest');
 const breakModeRestartEl = document.querySelector('#breakModeRestart');
 const breakModeStatusEl = document.querySelector('#breakModeStatus');
 const breakModeCloseEl = document.querySelector('#breakModeClose');
+const workspaceSubtitleEl = document.querySelector('#workspaceSubtitle');
+const workspacePatientEl = document.querySelector('#workspacePatient');
+const workspaceScreenEl = document.querySelector('#workspaceScreen');
+const assetListEl = document.querySelector('#assetList');
+const assetCountEl = document.querySelector('#assetCount');
+const presetListEl = document.querySelector('#presetList');
+const presetCountEl = document.querySelector('#presetCount');
+const assetUploadInputEl = document.querySelector('#assetUploadInput');
+const refreshWorkspaceEl = document.querySelector('#refreshWorkspace');
 
 const VOICE_IDLE_ICON = `
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -42,6 +51,10 @@ const EXTENSION_BUILD_ID = 'voice-router-break-merge-2026-04-19-0015';
 const FIELD_LABELS = {
   tbmedicalfinal: 'Заключение',
   recommendations: 'Рекомендации',
+  complaints: 'Жалобы',
+  anamnesis: 'Анамнез',
+  'objective-status': 'Объективный статус',
+  appointments: 'Назначения',
   dynamics: 'Динамика развития',
   'work-plan': 'План работы',
   'planned-sessions': 'Планируемые занятия',
@@ -81,7 +94,9 @@ const state = {
   latestSuggestions: [],
   lastProcessedSpeechKey: '',
   lastProcessedSpeechAt: 0,
-  breakModeWidget: null
+  breakModeWidget: null,
+  patientAssets: [],
+  patientPresets: []
 };
 
 async function send(message) {
@@ -152,6 +167,139 @@ function clearChat() {
 
 function escapeText(value) {
   return String(value || '');
+}
+
+function screenTitle(screenId) {
+  if (screenId === 'inspection') return 'Форма приема';
+  if (screenId === 'schedule') return 'Расписание';
+  if (screenId === 'board') return 'Сетка расписания';
+  return 'Нет активной формы';
+}
+
+function compactText(value, fallback = '') {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
+function createWorkspaceItem({ title, meta = '', copy = '', tags = [], action = null }) {
+  const item = document.createElement('article');
+  item.className = 'workspace-item';
+
+  const head = document.createElement('div');
+  head.className = 'workspace-item-head';
+
+  const titleEl = document.createElement('p');
+  titleEl.className = 'workspace-item-title';
+  titleEl.textContent = title;
+  head.append(titleEl);
+
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = action.kind === 'primary' ? 'primary-button' : 'ghost-button';
+    button.textContent = action.label;
+    button.addEventListener('click', action.onClick);
+    head.append(button);
+  }
+
+  item.append(head);
+
+  if (meta) {
+    const metaEl = document.createElement('p');
+    metaEl.className = 'workspace-item-meta';
+    metaEl.textContent = meta;
+    item.append(metaEl);
+  }
+
+  if (copy) {
+    const copyEl = document.createElement('p');
+    copyEl.className = 'workspace-item-copy';
+    copyEl.textContent = copy;
+    item.append(copyEl);
+  }
+
+  if (tags.length) {
+    const tagsEl = document.createElement('div');
+    tagsEl.className = 'workspace-item-tags';
+    for (const tag of tags) {
+      const tagEl = document.createElement('span');
+      tagEl.className = 'tag';
+      tagEl.textContent = tag;
+      tagsEl.append(tagEl);
+    }
+    item.append(tagsEl);
+  }
+
+  return item;
+}
+
+function renderWorkspaceDeck() {
+  const screenContext = state.latestScreenContext;
+  const patientName = compactText(screenContext?.selected_patient_name, 'Не выбран');
+  const screenName = screenTitle(screenContext?.screen_id);
+  const canUseAssets = Boolean(screenContext?.selected_patient_id || screenContext?.selected_appointment_id);
+  const canUsePresets = Boolean(screenContext?.screen_id === 'inspection' && screenContext?.selected_appointment_id);
+
+  workspacePatientEl.textContent = patientName;
+  workspaceScreenEl.textContent = screenName;
+  workspaceSubtitleEl.textContent = canUsePresets
+    ? 'Файлы пациента и готовые медицинские заготовки доступны прямо перед заполнением формы.'
+    : 'Откройте карточку приема, чтобы загрузить документы и применить профильные пресеты в черновик.';
+  assetCountEl.textContent = String(state.patientAssets.length || 0);
+  presetCountEl.textContent = String(state.patientPresets.length || 0);
+  assetUploadInputEl.disabled = !canUseAssets;
+  refreshWorkspaceEl.disabled = !canUseAssets;
+
+  assetListEl.replaceChildren();
+  if (!canUseAssets) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = 'Сначала выберите пациента или откройте форму приема.';
+    assetListEl.append(empty);
+  } else if (!state.patientAssets.length) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = 'Загрузите PDF, выписку, справку или старый шаблон врача, чтобы агент учитывал их в подсказках.';
+    assetListEl.append(empty);
+  } else {
+    for (const asset of state.patientAssets.slice(0, 6)) {
+      assetListEl.append(createWorkspaceItem({
+        title: compactText(asset.file_name, 'Документ'),
+        meta: [compactText(asset.category), compactText(asset.mime_type)].filter(Boolean).join(' • '),
+        copy: compactText(asset.summary, 'Документ загружен в рабочий контекст пациента.'),
+        tags: [compactText(asset.source, 'uploaded')]
+      }));
+    }
+  }
+
+  presetListEl.replaceChildren();
+  if (!canUsePresets) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = 'Пресеты становятся активными внутри формы приема, когда агент видит конкретное назначение.';
+    presetListEl.append(empty);
+  } else if (!state.patientPresets.length) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = 'Пока нет готовых пресетов. Загрузите документы пациента или откройте историю болезней.';
+    presetListEl.append(empty);
+  } else {
+    for (const preset of state.patientPresets.slice(0, 5)) {
+      presetListEl.append(createWorkspaceItem({
+        title: compactText(preset.title, 'Пресет'),
+        meta: compactText(preset.summary || preset.reason, ''),
+        copy: Array.isArray(preset.fields) && preset.fields.length
+          ? preset.fields.map((field) => FIELD_LABELS[field.field_key] || field.field_key).join(', ')
+          : 'Подготовит поля формы для черновика.',
+        tags: [compactText(preset.specialty, 'psychology')],
+        action: {
+          kind: 'primary',
+          label: 'В черновик',
+          onClick: () => queuePresetPreview(preset.preset_id)
+        }
+      }));
+    }
+  }
 }
 
 function appendMessage({ role = 'assistant', title = '', body = '', cards = [], tone = '' }) {
@@ -727,12 +875,124 @@ async function startPcmAudioPump(sendPcmBytes) {
   state.sourceNode.connect(state.processorNode);
 }
 
+async function loadWorkspaceData({ screenContext = state.latestScreenContext, silent = false } = {}) {
+  state.latestScreenContext = screenContext || state.latestScreenContext;
+
+  if (!screenContext?.selected_patient_id && !screenContext?.selected_appointment_id) {
+    state.patientAssets = [];
+    state.patientPresets = [];
+    renderWorkspaceDeck();
+    return { ok: true, assets: [], presets: [] };
+  }
+
+  try {
+    const assetsResult = await send({
+      type: 'get-patient-assets',
+      patientId: screenContext.selected_patient_id,
+      appointmentId: screenContext.selected_appointment_id
+    });
+    if (!assetsResult.ok) throw new Error(assetsResult.error || 'Не удалось получить документы пациента.');
+
+    state.patientAssets = assetsResult.assets || [];
+
+    if (screenContext.screen_id === 'inspection' && screenContext.selected_appointment_id) {
+      const presetsResult = await send({
+        type: 'get-patient-presets',
+        appointmentId: screenContext.selected_appointment_id
+      });
+      if (!presetsResult.ok) throw new Error(presetsResult.error || 'Не удалось получить пресеты пациента.');
+      state.patientPresets = presetsResult.presets || [];
+    } else {
+      state.patientPresets = [];
+    }
+
+    renderWorkspaceDeck();
+    return { ok: true, assets: state.patientAssets, presets: state.patientPresets };
+  } catch (error) {
+    state.patientPresets = [];
+    renderWorkspaceDeck();
+    if (!silent) {
+      showError(error);
+    }
+    return { ok: false, error: error.message };
+  }
+}
+
+async function uploadSelectedFiles(event) {
+  const selectedFiles = Array.from(event.target.files || []);
+  if (!selectedFiles.length) return;
+
+  const screenContext = state.latestScreenContext;
+  if (!screenContext?.selected_patient_id && !screenContext?.selected_appointment_id) {
+    event.target.value = '';
+    showError(new Error('Сначала откройте карточку пациента или форму приема.'));
+    return;
+  }
+
+  try {
+    setStatus('Загружаю файлы пациента в рабочий контекст.');
+    const files = [];
+    for (const file of selectedFiles) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      files.push({
+        name: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        base64Data: toBase64(bytes),
+        category: file.type.startsWith('image/') ? 'scan' : 'document'
+      });
+    }
+
+    const result = await send({
+      type: 'upload-patient-assets',
+      patientId: screenContext.selected_patient_id,
+      appointmentId: screenContext.selected_appointment_id,
+      files
+    });
+    if (!result.ok) {
+      throw new Error(result.error || 'Не удалось загрузить файлы пациента.');
+    }
+
+    state.patientAssets = result.assets || [];
+    await loadWorkspaceData({ screenContext, silent: true });
+    appendMessage({
+      role: 'assistant',
+      title: 'Документы добавлены',
+      body: `Загрузил ${selectedFiles.length} файл(а) в рабочий контекст пациента. Теперь агент сможет учитывать их в подсказках и пресетах.`
+    });
+    setStatus('Файлы пациента добавлены.');
+  } catch (error) {
+    showError(error);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function queuePresetPreview(presetId) {
+  try {
+    setStatus('Готовлю пресет и подаю его в черновик формы.');
+    const result = await send({ type: 'apply-patient-preset', presetId });
+    if (!result.ok) {
+      throw new Error(result.error || 'Не удалось подготовить пресет.');
+    }
+    state.latestSuggestions = result.draftState?.draft_patches || result.preview?.patches || [];
+    appendMessage({
+      role: 'assistant',
+      title: 'Пресет подготовлен',
+      body: result.preview?.explanation || 'Я добавил профильный пресет в черновик. Перед сохранением проверьте поля и примените их вручную.'
+    });
+    await loadDraft({ silent: true });
+  } catch (error) {
+    showError(error);
+  }
+}
+
 async function refreshContext({ silent = false } = {}) {
   try {
     setStatus('Проверяю текущий экран.');
     const result = await send({ type: 'refresh-context' });
     if (!result.ok) throw new Error(result.error || 'Не удалось определить экран.');
     state.latestScreenContext = result.screenContext;
+    await loadWorkspaceData({ screenContext: result.screenContext, silent: true });
     const label = screenLabel(result.screenContext);
     setStatus(label);
     if (!silent) {
@@ -750,6 +1010,7 @@ async function loadDraft({ silent = false } = {}) {
     const result = await send({ type: 'get-draft-state' });
     if (!result.ok) throw new Error(result.error || 'Не удалось получить предложения.');
     state.latestScreenContext = result.screenContext;
+    await loadWorkspaceData({ screenContext: result.screenContext, silent: true });
     state.latestSuggestions = result.draftState?.draft_patches || [];
     const cards = suggestionCards(state.latestSuggestions);
     if (!silent || cards.length) {
@@ -1396,6 +1657,8 @@ async function handleSubmit(event) {
 
 function initEvents() {
   document.querySelector('#refreshContext').addEventListener('click', () => refreshContext());
+  refreshWorkspaceEl.addEventListener('click', () => loadWorkspaceData());
+  assetUploadInputEl.addEventListener('change', uploadSelectedFiles);
   document.querySelector('#loadDraft').addEventListener('click', () => loadDraft());
   document.querySelector('#applyPreview').addEventListener('click', applyPreview);
   document.querySelector('#saveInspection').addEventListener('click', saveInspection);
@@ -1448,6 +1711,7 @@ function initEvents() {
 function init() {
   setTheme(localStorage.getItem('damumed-assistant-theme') || 'light');
   updateAdvisorUi();
+  renderWorkspaceDeck();
   initEvents();
   document.body.dataset.buildId = EXTENSION_BUILD_ID;
   appendMessage({

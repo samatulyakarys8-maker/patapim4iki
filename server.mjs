@@ -16,6 +16,7 @@ import {
   getDeepgramRealtimeConfig,
   getDraftState,
   getPatientById,
+  injectDraftPatches,
   inferScreenId,
   ingestTranscript,
   markPreviewApplied,
@@ -27,6 +28,7 @@ import {
 } from './lib/agent.mjs';
 import { AdvisorContextError, analyzeAdvisor } from './lib/advisor.mjs';
 import { getOpenAiSttConfig, transcribeOpenAiAudio } from './lib/openai-stt.mjs';
+import { buildPatientPresets, getPatientAssets, registerPatientAsset } from './lib/patient-assets.mjs';
 import { buildPsychologistsFromRuntime, generatePsychologistSchedule } from './lib/scheduler.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,7 +61,85 @@ loadLocalEnv();
 
 await writeArtifacts(GENERATED_DIR);
 const artifacts = buildArtifacts();
-const runtime = seedRuntimeState(artifacts);
+let runtime = seedRuntimeState(artifacts);
+
+function mergeRuntimeState(baseRuntime, persistedRuntime) {
+  if (!persistedRuntime || typeof persistedRuntime !== 'object') return baseRuntime;
+
+  const persistedDays = Array.isArray(persistedRuntime.scheduleDays) ? persistedRuntime.scheduleDays : [];
+  const persistedAppointments = persistedRuntime.appointments || {};
+
+  const scheduleDays = baseRuntime.scheduleDays.map((day) => {
+    const persistedDay = persistedDays.find((item) => item.date === day.date);
+    if (!persistedDay) return day;
+    const slots = day.slots.map((slot) => {
+      const persistedSlot = (persistedDay.slots || []).find((item) =>
+        item.slot_id === slot.slot_id
+        || (item.date === slot.date && item.provider_id === slot.provider_id && item.start_time === slot.start_time)
+      );
+      return persistedSlot ? { ...slot, ...persistedSlot } : slot;
+    });
+    return { ...day, ...persistedDay, slots };
+  });
+
+  const appointments = Object.fromEntries(
+    Object.entries(baseRuntime.appointments).map(([appointmentId, baseAppointment]) => {
+      const persistedAppointment = persistedAppointments[appointmentId];
+      if (!persistedAppointment) return [appointmentId, baseAppointment];
+      return [appointmentId, {
+        ...baseAppointment,
+        ...persistedAppointment,
+        inspection_draft: {
+          ...baseAppointment.inspection_draft,
+          ...(persistedAppointment.inspection_draft || {}),
+          supplemental: {
+            ...baseAppointment.inspection_draft.supplemental,
+            ...(persistedAppointment.inspection_draft?.supplemental || {})
+          },
+          medical_record_sections: Array.isArray(persistedAppointment.inspection_draft?.medical_record_sections)
+            ? persistedAppointment.inspection_draft.medical_record_sections
+            : baseAppointment.inspection_draft.medical_record_sections
+        },
+        draft_state: {
+          ...baseAppointment.draft_state,
+          ...(persistedAppointment.draft_state || {})
+        },
+        readonly_tabs: {
+          ...baseAppointment.readonly_tabs,
+          ...(persistedAppointment.readonly_tabs || {})
+        }
+      }];
+    })
+  );
+
+  return {
+    ...baseRuntime,
+    ...persistedRuntime,
+    providers: Array.isArray(persistedRuntime.providers) && persistedRuntime.providers.length ? persistedRuntime.providers : baseRuntime.providers,
+    patients: Array.isArray(persistedRuntime.patients) && persistedRuntime.patients.length ? persistedRuntime.patients : baseRuntime.patients,
+    patient_assets: persistedRuntime.patient_assets || {},
+    scheduleDays,
+    appointments,
+    currentDate: persistedRuntime.currentDate || baseRuntime.currentDate,
+    voiceLexicon: persistedRuntime.voiceLexicon || baseRuntime.voiceLexicon
+  };
+}
+
+async function loadPersistedRuntime() {
+  try {
+    const raw = await fsp.readFile(RUNTIME_PATH, 'utf8');
+    const persistedRuntime = JSON.parse(raw);
+    runtime = mergeRuntimeState(runtime, persistedRuntime);
+    normalizeRuntimePatients(runtime);
+    for (const patient of runtime.patients || []) {
+      syncPatientReadonlyFiles(runtime, patient.patient_id);
+    }
+  } catch {
+    // Ignore absent or invalid runtime snapshots and keep a fresh seeded state.
+  }
+}
+
+await loadPersistedRuntime();
 await fsp.writeFile(path.join(GENERATED_DIR, 'voice_lexicon.json'), JSON.stringify(runtime.voiceLexicon, null, 2), 'utf8');
 await persistRuntime();
 
@@ -145,9 +225,93 @@ function serializeScheduleDay(day, statusFilter = 'all') {
   return { ...day, slots };
 }
 
+function serializeScheduleWindow(activeDate) {
+  return runtime.scheduleDays.map((day, index) => {
+    const slots = day.slots || [];
+    const scheduledCount = slots.filter((slot) => slot.status === 'scheduled').length;
+    const completedCount = slots.filter((slot) => slot.status === 'completed').length;
+    const availableCount = slots.filter((slot) => slot.status === 'available').length;
+    const occupiedCount = scheduledCount + completedCount;
+
+    return {
+      date: day.date,
+      dayIndex: index + 1,
+      isActive: day.date === activeDate,
+      providerCount: new Set(slots.map((slot) => slot.provider_id)).size,
+      slotsCount: slots.length,
+      scheduledCount,
+      completedCount,
+      availableCount,
+      occupiedCount,
+      occupancyRate: slots.length ? Math.round((occupiedCount / slots.length) * 100) : 0
+    };
+  });
+}
+
+function serializeSchedulePayload(date, statusFilter = 'all') {
+  const currentDay = getCurrentDay(date);
+  runtime.currentDate = currentDay.date;
+  return {
+    currentDate: runtime.currentDate,
+    scheduleDay: serializeScheduleDay(currentDay, statusFilter),
+    scheduleWindow: serializeScheduleWindow(runtime.currentDate)
+  };
+}
+
 async function persistRuntime() {
   await fsp.mkdir(path.dirname(RUNTIME_PATH), { recursive: true });
   await fsp.writeFile(RUNTIME_PATH, JSON.stringify(runtime, null, 2), 'utf8');
+}
+
+const KNOWN_PATIENT_NAME_FIXES = {
+  'patient-history-1': 'Абай Амина',
+  'patient-history-2': 'Ахмедияр Іңкәр',
+  'patient-history-3': 'Нұрбөлекұлы Нұрәли',
+  'patient-history-4': 'Темірбай Айбат',
+  'patient-history-5': 'Базархан Мирас',
+  'patient-history-6': 'Қарақойшин Амре',
+  'ARCH-001': 'Абай Амина',
+  'ARCH-002': 'Ахмедияр Іңкәр',
+  'ARCH-003': 'Нұрбөлекұлы Нұрәли',
+  'ARCH-004': 'Темірбай Айбат',
+  'ARCH-005': 'Базархан Мирас',
+  'ARCH-006': 'Қарақойшин Амре',
+  'history-1': 'Абай Амина',
+  'history-2': 'Ахмедияр Іңкәр',
+  'history-3': 'Нұрбөлекұлы Нұрәли',
+  'history-4': 'Темірбай Айбат',
+  'history-5': 'Базархан Мирас',
+  'history-6': 'Қарақойшин Амре'
+};
+
+function looksLikeBrokenPatientName(value) {
+  const text = String(value || '');
+  return /Р[А-Яа-яA-Za-z]/.test(text) || /С[А-Яа-яA-Za-z]/.test(text) || text.includes('вЂ') || text.includes('пїЅ');
+}
+
+function normalizePatientFullName(patient) {
+  const byPatientId = patient?.patient_id ? KNOWN_PATIENT_NAME_FIXES[patient.patient_id] : '';
+  if (byPatientId) return byPatientId;
+  const byLocalId = patient?.iin_or_local_id ? KNOWN_PATIENT_NAME_FIXES[patient.iin_or_local_id] : '';
+  if (byLocalId) return byLocalId;
+  const byHistoryRef = Array.isArray(patient?.history_refs)
+    ? patient.history_refs.map((ref) => KNOWN_PATIENT_NAME_FIXES[ref]).find(Boolean)
+    : '';
+  if (byHistoryRef) return byHistoryRef;
+  const name = String(patient?.full_name || '').trim();
+  return looksLikeBrokenPatientName(name) ? '' : name;
+}
+
+function normalizePatientRecord(patient) {
+  return {
+    ...patient,
+    full_name: normalizePatientFullName(patient) || patient.full_name || ''
+  };
+}
+
+function normalizeRuntimePatients(targetRuntime) {
+  if (!Array.isArray(targetRuntime?.patients)) return;
+  targetRuntime.patients = targetRuntime.patients.map(normalizePatientRecord);
 }
 
 function addAudit(entry) {
@@ -197,7 +361,7 @@ function getSchedulerPatients(runtime) {
 
   return patients.map((patient) => ({
     patient_id: patient.patient_id,
-    full_name: patient.full_name,
+    full_name: normalizePatientFullName(patient) || patient.full_name,
     birth_date: patient.birth_date || '',
     iin_or_local_id: patient.iin_or_local_id || '',
     sex: patient.sex || '',
@@ -209,15 +373,85 @@ function getSchedulerPatientById(runtime, patientId) {
   return getSchedulerPatients(runtime).find((patient) => patient.patient_id === patientId) || null;
 }
 
+function compactText(input) {
+  return String(input || '').replace(/\s+/g, ' ').trim();
+}
+
+function assetsToReadonlyFiles(assets = []) {
+  return assets.map((asset) => ({
+    id: asset.asset_id,
+    name: asset.name,
+    source: asset.category,
+    summary: asset.text_excerpt || ''
+  }));
+}
+
+function syncPatientReadonlyFiles(runtime, patientId) {
+  const patient = getPatientById(runtime, patientId) || getSchedulerPatientById(runtime, patientId);
+  if (!patient) return;
+  const extraFiles = assetsToReadonlyFiles(getPatientAssets(runtime, patientId));
+  const readonlyFiles = buildReadonlyTabs(patient, { extraFiles }).files;
+
+  for (const appointment of Object.values(runtime.appointments || {})) {
+    if (appointment.patient_id !== patientId) continue;
+    appointment.readonly_tabs = {
+      ...appointment.readonly_tabs,
+      files: readonlyFiles
+    };
+  }
+}
+
+function presetFieldKey(fieldKey) {
+  const map = {
+    complaints_text: 'complaints',
+    anamnesis_text: 'anamnesis',
+    objective_status_text: 'objective-status',
+    appointments_text: 'appointments',
+    tbmedicalfinal: 'tbmedicalfinal',
+    recommendations: 'recommendations',
+    dynamics: 'dynamics',
+    work_plan: 'work-plan',
+    planned_sessions: 'planned-sessions',
+    completed_sessions: 'completed-sessions'
+  };
+  return map[fieldKey] || fieldKey;
+}
+
+function buildPresetPatches(preset) {
+  return Object.entries(preset?.fields || {})
+    .map(([fieldKey, value]) => ({
+      field_key: presetFieldKey(fieldKey),
+      value_type: 'text',
+      value: compactText(value),
+      title: fieldKey
+    }))
+    .filter((patch) => patch.value);
+}
+
+function resolvePatientAssetsContext(runtime, { patientId = '', appointmentId = '' } = {}) {
+  const appointment = appointmentId ? getAppointmentById(runtime, appointmentId) : null;
+  const resolvedPatientId = patientId || appointment?.patient_id || '';
+  const patient = resolvedPatientId ? (getPatientById(runtime, resolvedPatientId) || getSchedulerPatientById(runtime, resolvedPatientId)) : null;
+  const assets = resolvedPatientId ? getPatientAssets(runtime, resolvedPatientId) : [];
+  return {
+    appointment,
+    patient,
+    patientId: resolvedPatientId,
+    assets
+  };
+}
+
 function getAttachedPatientsByProvider(runtime, providerId) {
   const provider = Array.isArray(runtime?.providers)
     ? runtime.providers.find((item) => item.provider_id === providerId)
     : null;
   const attachedIds = new Set(Array.isArray(provider?.attached_patient_ids) ? provider.attached_patient_ids : []);
   if (!attachedIds.size) {
-    return Array.isArray(runtime?.patients) ? runtime.patients : [];
+    return Array.isArray(runtime?.patients) ? runtime.patients.map(normalizePatientRecord) : [];
   }
-  return (Array.isArray(runtime?.patients) ? runtime.patients : []).filter((patient) => attachedIds.has(patient.patient_id));
+  return (Array.isArray(runtime?.patients) ? runtime.patients : [])
+    .filter((patient) => attachedIds.has(patient.patient_id))
+    .map(normalizePatientRecord);
 }
 
 function resetAppointmentMedicalState(appointment, patient) {
@@ -226,6 +460,10 @@ function resetAppointmentMedicalState(appointment, patient) {
   appointment.executed_at = null;
   appointment.inspection_draft = {
     ...appointment.inspection_draft,
+    complaints_text: '',
+    anamnesis_text: '',
+    objective_status_text: '',
+    appointments_text: '',
     conclusion_text: '',
     medical_record_sections: appointment.inspection_draft.medical_record_sections.map((section) => ({
       ...section,
@@ -255,20 +493,97 @@ function resetAppointmentMedicalState(appointment, patient) {
     ...buildReadonlyTabs(patient),
     diaries: [{ id: 'diary-1', note: `${patient.full_name}: прием запланирован, форма ожидает заполнения.` }]
   };
+  syncPatientReadonlyFiles(runtime, patient.patient_id);
+}
+
+function buildSchedulingPsychologists(runtime) {
+  const psychologists = buildPsychologistsFromRuntime(runtime);
+  return psychologists.map((psychologist) => {
+    const occupiedSlots = runtime.scheduleDays
+      .flatMap((day) => day.slots)
+      .filter((slot) => slot.provider_id === psychologist.psychologist_id && slot.patient_id)
+      .map((slot) => ({
+        date: slot.date,
+        start: slot.start_time,
+        end: slot.end_time
+      }));
+
+    return {
+      ...psychologist,
+      busy_slots: [...(psychologist.busy_slots || []), ...occupiedSlots]
+    };
+  });
+}
+
+function applyGeneratedScheduleToRuntime(generated, patientId) {
+  const applied = [];
+  const unassigned = [...(generated.unassigned || [])];
+
+  for (const day of generated.days || []) {
+    for (const appointment of day.appointments || []) {
+      const targetDay = runtime.scheduleDays.find((item) => item.date === day.date);
+      const slot = targetDay?.slots.find((item) =>
+        item.provider_id === appointment.psychologistId &&
+        item.start_time === appointment.start
+      );
+
+      if (!slot) {
+        unassigned.push({
+          date: day.date,
+          durationMin: appointment.durationMin,
+          reason: 'Generated slot is outside the visible schedule grid.'
+        });
+        continue;
+      }
+
+      if (slot.patient_id && slot.patient_id !== patientId) {
+        unassigned.push({
+          date: day.date,
+          durationMin: appointment.durationMin,
+          reason: 'Target slot is already occupied in the schedule grid.'
+        });
+        continue;
+      }
+
+      const patient = getPatientById(runtime, patientId);
+      if (!patient) continue;
+
+      slot.patient_id = patient.patient_id;
+      slot.status = 'scheduled';
+      const runtimeAppointment = runtime.appointments[slot.appointment_id];
+      resetAppointmentMedicalState(runtimeAppointment, patient);
+      applied.push({
+        date: day.date,
+        slot_id: slot.slot_id,
+        appointment_id: slot.appointment_id,
+        provider_id: slot.provider_id,
+        start: slot.start_time,
+        end: slot.end_time
+      });
+    }
+  }
+
+  return {
+    ...generated,
+    applied,
+    unassigned
+  };
 }
 
 async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
+    const schedulePayload = serializeSchedulePayload(runtime.currentDate, 'all');
     return sendJson(res, 200, {
       app: {
         name: 'Damumed Sandbox',
         phase: 'phase-1-vertical-slice',
         server_time: new Date().toISOString()
       },
-      currentDate: runtime.currentDate,
+      currentDate: schedulePayload.currentDate,
       providers: runtime.providers,
       patients: getSchedulerPatients(runtime),
-      scheduleDay: serializeScheduleDay(getCurrentDay(runtime.currentDate)),
+      scheduleDay: schedulePayload.scheduleDay,
+      scheduleWindow: schedulePayload.scheduleWindow,
       sourceOfTruth: {
         generated_at: artifacts.generated_at,
         screens: artifacts.screen_inventory,
@@ -286,13 +601,12 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/schedule') {
     const date = url.searchParams.get('date') || runtime.currentDate;
     const statusFilter = url.searchParams.get('status') || 'all';
-    runtime.currentDate = date;
-    return sendJson(res, 200, serializeScheduleDay(getCurrentDay(date), statusFilter));
+    return sendJson(res, 200, serializeSchedulePayload(date, statusFilter));
   }
 
   if (req.method === 'POST' && url.pathname === '/api/current-date') {
     const body = await readBody(req);
-    runtime.currentDate = body.date || runtime.currentDate;
+    runtime.currentDate = getCurrentDay(body.date || runtime.currentDate).date;
     await persistRuntime();
     return sendJson(res, 200, { currentDate: runtime.currentDate });
   }
@@ -313,9 +627,112 @@ async function handleApi(req, res, url) {
       : getSchedulerPatients(runtime);
     const normalized = String(q || '').trim().toLowerCase();
     const patients = normalized
-      ? sourcePatients.filter((patient) => String(patient.full_name || '').toLowerCase().includes(normalized) || String(patient.iin_or_local_id || '').includes(normalized))
+      ? sourcePatients.filter((patient) => String(normalizePatientFullName(patient) || patient.full_name || '').toLowerCase().includes(normalized) || String(patient.iin_or_local_id || '').includes(normalized))
       : sourcePatients;
-    return sendJson(res, 200, { patients });
+    return sendJson(res, 200, { patients: patients.map(normalizePatientRecord) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/patient-assets') {
+    const context = resolvePatientAssetsContext(runtime, {
+      patientId: url.searchParams.get('patientId') || '',
+      appointmentId: url.searchParams.get('appointmentId') || ''
+    });
+    return sendJson(res, 200, {
+      patientId: context.patientId,
+      assets: context.assets
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/patient-assets/upload') {
+    const body = await readBody(req);
+    const context = resolvePatientAssetsContext(runtime, {
+      patientId: body.patientId || '',
+      appointmentId: body.appointmentId || ''
+    });
+    if (!context.patientId || !context.patient) {
+      return sendJson(res, 404, { error: 'Patient not found for asset upload.' });
+    }
+    const files = Array.isArray(body.files) ? body.files : [];
+    if (!files.length) {
+      return sendJson(res, 400, { error: 'No files were provided.' });
+    }
+
+    const uploaded = [];
+    for (const file of files) {
+      if (!file?.base64Data || !file?.name) continue;
+      const asset = await registerPatientAsset(runtime, {
+        patientId: context.patientId,
+        fileName: file.name,
+        mimeType: file.mimeType,
+        base64Data: file.base64Data,
+        category: file.category
+      });
+      uploaded.push(asset);
+    }
+
+    if (!uploaded.length) {
+      return sendJson(res, 400, { error: 'Files were empty or invalid.' });
+    }
+
+    syncPatientReadonlyFiles(runtime, context.patientId);
+    addAudit(createAuditEntry({
+      actorType: 'extension',
+      actionType: 'upload_patient_assets',
+      screenId: context.appointment ? 'inspection' : 'schedule',
+      entityRefs: { patient_id: context.patientId, appointment_id: context.appointment?.appointment_id || null },
+      payload: {
+        file_count: uploaded.length,
+        files: uploaded.map((asset) => ({ asset_id: asset.asset_id, name: asset.name, category: asset.category }))
+      },
+      result: 'uploaded'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, {
+      patientId: context.patientId,
+      assets: getPatientAssets(runtime, context.patientId)
+    });
+  }
+
+  if (req.method === 'GET' && /^\/api\/appointments\/[^/]+\/presets$/.test(url.pathname)) {
+    const appointmentId = url.pathname.split('/')[3];
+    const appointment = getAppointmentById(runtime, appointmentId);
+    if (!appointment) return notFound(res);
+    const patient = getPatientById(runtime, appointment.patient_id);
+    const assets = getPatientAssets(runtime, appointment.patient_id);
+    const presets = buildPatientPresets({ patient, appointment, assets });
+    return sendJson(res, 200, {
+      appointmentId,
+      patientId: appointment.patient_id,
+      presets
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/appointments\/[^/]+\/preset-preview$/.test(url.pathname)) {
+    const appointmentId = url.pathname.split('/')[3];
+    const appointment = getAppointmentById(runtime, appointmentId);
+    if (!appointment) return notFound(res);
+    const body = await readBody(req);
+    const patient = getPatientById(runtime, appointment.patient_id);
+    const assets = getPatientAssets(runtime, appointment.patient_id);
+    const presets = buildPatientPresets({ patient, appointment, assets });
+    const preset = presets.find((item) => item.preset_id === body.presetId);
+    if (!preset) {
+      return sendJson(res, 404, { error: 'Preset not found.' });
+    }
+
+    const queued = injectDraftPatches(runtime, appointmentId, buildPresetPatches(preset), {
+      provenance: `preset:${preset.preset_id}`
+    });
+    addAudit(createAuditEntry({
+      actorType: 'extension',
+      actionType: 'queue_patient_preset',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: appointmentId, patient_id: appointment.patient_id },
+      payload: { preset_id: preset.preset_id, preset_title: preset.title },
+      result: 'preview_ready'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, queued);
   }
 
   if (req.method === 'POST' && url.pathname === '/api/psychologist-schedule/generate') {
@@ -335,12 +752,32 @@ async function handleApi(req, res, url) {
       return sendJson(res, 400, { error: 'Psychologist sessions currently support fixed 30-minute slots only.' });
     }
 
-    return sendJson(res, 200, generatePsychologistSchedule({
+    const generated = generatePsychologistSchedule({
       patient,
-      psychologists: buildPsychologistsFromRuntime(runtime),
+      psychologists: buildSchedulingPsychologists(runtime),
       startDate: body.startDate || runtime.currentDate,
       sessionCount
-    }));
+    });
+
+    if (body.apply) {
+      const appliedSchedule = applyGeneratedScheduleToRuntime(generated, patient.patient_id);
+      addAudit(createAuditEntry({
+        actorType: 'user',
+        actionType: 'generate_psychologist_schedule',
+        screenId: 'board',
+        entityRefs: { patient_id: patient.patient_id },
+        payload: { sessionCount, startDate: body.startDate || runtime.currentDate },
+        result: `applied:${appliedSchedule.applied.length}`
+      }));
+      await persistRuntime();
+      return sendJson(res, 200, {
+        ...appliedSchedule,
+        currentDate: runtime.currentDate,
+        scheduleWindow: serializeScheduleWindow(runtime.currentDate)
+      });
+    }
+
+    return sendJson(res, 200, generated);
   }
 
   if (req.method === 'GET' && /^\/api\/appointments\//.test(url.pathname)) {
@@ -396,6 +833,10 @@ async function handleApi(req, res, url) {
     appointment.executed_at = null;
     appointment.inspection_draft = {
       ...appointment.inspection_draft,
+      complaints_text: '',
+      anamnesis_text: '',
+      objective_status_text: '',
+      appointments_text: '',
       conclusion_text: '',
       medical_record_sections: appointment.inspection_draft.medical_record_sections.map((section) => ({
         ...section,

@@ -104,6 +104,15 @@ async function postJson(path, body) {
   return payload;
 }
 
+async function getJson(path) {
+  const response = await fetch(`${API_BASE}${path}`);
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || payload.details || `Backend request failed: ${response.status}`);
+  }
+  return payload;
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   if (chrome.sidePanel?.setPanelBehavior) {
     await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -118,6 +127,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'refresh-context') {
       const screenContext = await getScreenContext(tab.id);
       sendResponse({ ok: true, screenContext });
+      return;
+    }
+
+    if (message.type === 'get-patient-assets') {
+      const screenContext = await getScreenContext(tab.id);
+      const params = new URLSearchParams();
+      if (message.patientId || screenContext.selected_patient_id) {
+        params.set('patientId', message.patientId || screenContext.selected_patient_id);
+      }
+      if (message.appointmentId || screenContext.selected_appointment_id) {
+        params.set('appointmentId', message.appointmentId || screenContext.selected_appointment_id);
+      }
+      const payload = await getJson(`/api/patient-assets?${params.toString()}`);
+      sendResponse({ ok: true, screenContext, ...payload });
+      return;
+    }
+
+    if (message.type === 'upload-patient-assets') {
+      const screenContext = await getScreenContext(tab.id);
+      const payload = await postJson('/api/patient-assets/upload', {
+        patientId: message.patientId || screenContext.selected_patient_id,
+        appointmentId: message.appointmentId || screenContext.selected_appointment_id,
+        files: message.files || []
+      });
+      sendResponse({ ok: true, screenContext, ...payload });
+      return;
+    }
+
+    if (message.type === 'get-patient-presets') {
+      const screenContext = await getScreenContext(tab.id);
+      const appointmentId = message.appointmentId || screenContext.selected_appointment_id;
+      if (!appointmentId) {
+        throw new Error('Откройте форму приема пациента, чтобы получить пресеты.');
+      }
+      const payload = await getJson(`/api/appointments/${appointmentId}/presets`);
+      sendResponse({ ok: true, screenContext, ...payload });
+      return;
+    }
+
+    if (message.type === 'apply-patient-preset') {
+      const screenContext = await getScreenContext(tab.id);
+      const appointmentId = message.appointmentId || screenContext.selected_appointment_id;
+      if (!appointmentId) {
+        throw new Error('Откройте форму приема пациента, чтобы применить пресет.');
+      }
+      const payload = await postJson(`/api/appointments/${appointmentId}/preset-preview`, {
+        presetId: message.presetId
+      });
+      if (payload.preview) {
+        await cacheAndHighlight(tab.id, payload.preview);
+      }
+      sendResponse({ ok: true, screenContext, ...payload });
       return;
     }
 
