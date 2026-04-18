@@ -82,6 +82,7 @@ select:focus-visible {
 }
 
 .panel {
+  position: relative;
   height: 100vh;
   min-height: 0;
   display: grid;
@@ -227,6 +228,89 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.break-mode-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at top, rgba(20, 184, 166, 0.12), transparent 30%),
+    var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.break-mode-panel[hidden] {
+  display: none !important;
+}
+
+.break-mode-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.break-mode-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--primary);
+}
+
+.break-mode-copy {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.break-mode-scoreboard {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.break-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--secondary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.break-mode-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: block;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.break-mode-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel.break-mode-active > :not(.break-mode-panel) {
+  display: none;
+}
+
+.panel.break-mode-active .break-mode-panel {
+  display: grid;
 }
 
 .composer {
@@ -414,6 +498,19 @@ textarea::placeholder {
 .menu-item.danger:hover {
   background: color-mix(in srgb, var(--destructive) 14%, var(--popover));
   color: var(--destructive);
+}
+
+.secret-break-trigger {
+  margin-top: 4px;
+  opacity: 0.42;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.secret-break-trigger:hover,
+.secret-break-trigger:focus-visible {
+  opacity: 1;
 }
 
 .menu-label {

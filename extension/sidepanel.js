@@ -1,3 +1,6 @@
+import { isBreakModeCommand } from './break-mode.js';
+import { createBreakModeWidget } from './break-mode-widget.js';
+
 window.addEventListener('unhandledrejection', (event) => {
   const reason = event.reason?.message || event.reason || '';
   if (/patient_not_found|advisor_context_missing/i.test(String(reason))) {
@@ -15,6 +18,15 @@ const toolsMenuEl = document.querySelector('#toolsMenu');
 const toggleAdvisorModeEl = document.querySelector('#toggleAdvisorMode');
 const advisorModePillEl = document.querySelector('#advisorModePill');
 const advisorIndicatorEl = document.querySelector('#advisorIndicator');
+const breakModeTriggerEl = document.querySelector('#breakModeTrigger');
+const mainPanelEl = document.querySelector('#mainPanel');
+const breakModePanelEl = document.querySelector('#breakModePanel');
+const breakModeCanvasEl = document.querySelector('#breakModeCanvas');
+const breakModeScoreEl = document.querySelector('#breakModeScore');
+const breakModeBestEl = document.querySelector('#breakModeBest');
+const breakModeRestartEl = document.querySelector('#breakModeRestart');
+const breakModeStatusEl = document.querySelector('#breakModeStatus');
+const breakModeCloseEl = document.querySelector('#breakModeClose');
 
 const VOICE_IDLE_ICON = `
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -25,7 +37,7 @@ const VOICE_IDLE_ICON = `
   </svg>
 `;
 const VOICE_RECORDING_ICON = '<span class="stop-icon" aria-hidden="true"></span>';
-const EXTENSION_BUILD_ID = 'voice-router-slot-aware-2026-04-18-2156';
+const EXTENSION_BUILD_ID = 'voice-router-break-merge-2026-04-19-0015';
 
 const FIELD_LABELS = {
   tbmedicalfinal: 'Заключение',
@@ -68,7 +80,8 @@ const state = {
   latestScreenContext: null,
   latestSuggestions: [],
   lastProcessedSpeechKey: '',
-  lastProcessedSpeechAt: 0
+  lastProcessedSpeechAt: 0,
+  breakModeWidget: null
 };
 
 async function send(message) {
@@ -252,6 +265,42 @@ window.addEventListener('error', (event) => {
     showError(new Error(message));
   }
 });
+
+function ensureBreakModeWidget() {
+  if (!state.breakModeWidget) {
+    state.breakModeWidget = createBreakModeWidget({
+      root: breakModePanelEl,
+      canvas: breakModeCanvasEl,
+      scoreEl: breakModeScoreEl,
+      bestEl: breakModeBestEl,
+      restartButton: breakModeRestartEl,
+      statusEl: breakModeStatusEl
+    });
+  }
+  return state.breakModeWidget;
+}
+
+async function openBreakMode(trigger = 'command') {
+  const widget = ensureBreakModeWidget();
+  mainPanelEl.classList.add('break-mode-active');
+  widget.show();
+  chatInputEl.value = '';
+  closeToolsMenu();
+  setStatus('Break Mode открыт в боковой панели.');
+  appendMessage({
+    role: 'system',
+    title: 'Break Mode',
+    body: trigger === 'chat-command'
+      ? 'Открыл встроенную мини-игру прямо в панели.'
+      : 'Мини-игра доступна прямо в боковой панели.'
+  });
+}
+
+function closeBreakMode() {
+  mainPanelEl.classList.remove('break-mode-active');
+  state.breakModeWidget?.hide();
+  setStatus('Break Mode закрыт.');
+}
 
 function screenLabel(screenContext) {
   if (screenContext?.screen_id === 'inspection') return 'Открыта форма приема пациента.';
@@ -1329,6 +1378,10 @@ async function handleSubmit(event) {
     event.preventDefault();
     const text = chatInputEl.value.trim();
     if (!text) return;
+    if (isBreakModeCommand(text)) {
+      await openBreakMode('chat-command');
+      return;
+    }
     if (state.advisorModeEnabled) {
       chatInputEl.value = '';
       await askAdvisor(text);
@@ -1365,6 +1418,10 @@ function initEvents() {
     setAdvisorMode(false);
     closeToolsMenu();
   });
+  breakModeTriggerEl.addEventListener('click', () => {
+    openBreakMode('hidden-button').catch(showError);
+  });
+  breakModeCloseEl.addEventListener('click', closeBreakMode);
   themeToggleEl.addEventListener('click', () => {
     setTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
   });
@@ -1374,7 +1431,17 @@ function initEvents() {
     }
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeToolsMenu();
+    if (event.key === 'Escape') {
+      if (state.breakModeWidget?.isVisible()) {
+        closeBreakMode();
+      } else {
+        closeToolsMenu();
+      }
+    }
+    if (event.code === 'Space' && document.activeElement !== chatInputEl && state.breakModeWidget?.isVisible()) {
+      event.preventDefault();
+      state.breakModeWidget.jump();
+    }
   });
 }
 
