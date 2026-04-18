@@ -25,6 +25,13 @@ import {
   parseVoiceCommand,
   resolvePatientQuery
 } from '../lib/command-router.mjs';
+import {
+  BREAK_MODE_COMMANDS,
+  BREAK_MODE_LAYOUT,
+  BREAK_WIDGET_DEFAULTS,
+  isBreakModeCommand,
+  normalizeBreakModeCommand
+} from '../extension/break-mode.js';
 
 const artifacts = buildArtifacts();
 const runtime = seedRuntimeState(artifacts);
@@ -295,5 +302,17 @@ assert.equal(resolvePatientQuery('temirbay', runtime.patients).matchedPatient.pa
 assert.equal(resolvePatientQuery('рахметула айкуным', runtime.patients).matchedPatient.patient_id, 'patient-1');
 assert.equal(resolvePatientQuery('анкар', runtime.patients).matchedPatient.patient_id, 'patient-history-2');
 assert.equal(resolvePatientQuery('пациента', runtime.patients).status, 'not_found');
+
+assert.ok(Array.isArray(BREAK_MODE_COMMANDS));
+assert.equal(BREAK_MODE_COMMANDS.includes('play game'), true);
+assert.equal(BREAK_MODE_COMMANDS.includes('break mode'), true);
+assert.equal(isBreakModeCommand('play game'), true);
+assert.equal(isBreakModeCommand('Break Mode'), true);
+assert.equal(isBreakModeCommand('open patient'), false);
+assert.equal(normalizeBreakModeCommand('  Break Mode  '), 'break mode');
+assert.equal(BREAK_MODE_LAYOUT, 'overlay');
+assert.equal(BREAK_WIDGET_DEFAULTS.minHeight, 420);
+assert.equal(BREAK_WIDGET_DEFAULTS.pipeGap, 96);
+assert.equal(BREAK_WIDGET_DEFAULTS.spawnEveryFrames, 126);
 
 console.log('Smoke test passed');

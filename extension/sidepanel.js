@@ -1,3 +1,6 @@
+import { isBreakModeCommand } from './break-mode.js';
+import { createBreakModeWidget } from './break-mode-widget.js';
+
 const chatTimelineEl = document.querySelector('#chatTimeline');
 const chatInputEl = document.querySelector('#chatInput');
 const globalStatusEl = document.querySelector('#globalStatus');
@@ -8,6 +11,15 @@ const toolsMenuEl = document.querySelector('#toolsMenu');
 const toggleAdvisorModeEl = document.querySelector('#toggleAdvisorMode');
 const advisorModePillEl = document.querySelector('#advisorModePill');
 const advisorIndicatorEl = document.querySelector('#advisorIndicator');
+const breakModeTriggerEl = document.querySelector('#breakModeTrigger');
+const mainPanelEl = document.querySelector('#mainPanel');
+const breakModePanelEl = document.querySelector('#breakModePanel');
+const breakModeCanvasEl = document.querySelector('#breakModeCanvas');
+const breakModeScoreEl = document.querySelector('#breakModeScore');
+const breakModeBestEl = document.querySelector('#breakModeBest');
+const breakModeRestartEl = document.querySelector('#breakModeRestart');
+const breakModeStatusEl = document.querySelector('#breakModeStatus');
+const breakModeCloseEl = document.querySelector('#breakModeClose');
 
 const VOICE_IDLE_ICON = `
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -51,7 +63,8 @@ const state = {
   activeProvider: null,
   advisorModeEnabled: false,
   latestScreenContext: null,
-  latestSuggestions: []
+  latestSuggestions: [],
+  breakModeWidget: null
 };
 
 async function send(message) {
@@ -205,6 +218,42 @@ function showError(error) {
     body: message,
     tone: 'error'
   });
+}
+
+function ensureBreakModeWidget() {
+  if (!state.breakModeWidget) {
+    state.breakModeWidget = createBreakModeWidget({
+      root: breakModePanelEl,
+      canvas: breakModeCanvasEl,
+      scoreEl: breakModeScoreEl,
+      bestEl: breakModeBestEl,
+      restartButton: breakModeRestartEl,
+      statusEl: breakModeStatusEl
+    });
+  }
+  return state.breakModeWidget;
+}
+
+async function openBreakMode(trigger = 'command') {
+  const widget = ensureBreakModeWidget();
+  mainPanelEl.classList.add('break-mode-active');
+  widget.show();
+  chatInputEl.value = '';
+  closeToolsMenu();
+  setStatus('Break Mode открыт в боковой панели.');
+  appendMessage({
+    role: 'system',
+    title: 'Break Mode',
+    body: trigger === 'chat-command'
+      ? 'Открыл встроенную мини-игру прямо в панели.'
+      : 'Мини-игра доступна прямо в боковой панели.'
+  });
+}
+
+function closeBreakMode() {
+  mainPanelEl.classList.remove('break-mode-active');
+  state.breakModeWidget?.hide();
+  setStatus('Break Mode закрыт.');
 }
 
 function screenLabel(screenContext) {
@@ -768,6 +817,10 @@ async function handleSubmit(event) {
   event.preventDefault();
   const text = chatInputEl.value.trim();
   if (!text) return;
+  if (isBreakModeCommand(text)) {
+    await openBreakMode('chat-command');
+    return;
+  }
   if (state.advisorModeEnabled) {
     chatInputEl.value = '';
     await askAdvisor(text);
@@ -800,6 +853,10 @@ function initEvents() {
     setAdvisorMode(false);
     closeToolsMenu();
   });
+  breakModeTriggerEl.addEventListener('click', () => {
+    openBreakMode('hidden-button').catch(showError);
+  });
+  breakModeCloseEl.addEventListener('click', closeBreakMode);
   themeToggleEl.addEventListener('click', () => {
     setTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
   });
@@ -809,7 +866,17 @@ function initEvents() {
     }
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeToolsMenu();
+    if (event.key === 'Escape') {
+      if (state.breakModeWidget?.isVisible()) {
+        closeBreakMode();
+      } else {
+        closeToolsMenu();
+      }
+    }
+    if (event.code === 'Space' && document.activeElement !== chatInputEl && state.breakModeWidget?.isVisible()) {
+      event.preventDefault();
+      state.breakModeWidget.jump();
+    }
   });
 }
 

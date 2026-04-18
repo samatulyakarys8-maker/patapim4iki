@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
-    <main class="panel">
+    <main class="panel" id="mainPanel">
       <header class="app-header">
         <div>
           <p class="eyebrow">AI assistant</p>
@@ -18,6 +18,23 @@
       </header>
 
       <section id="chatTimeline" class="chat-timeline" aria-live="polite"></section>
+      <section id="breakModePanel" class="break-mode-panel" hidden>
+        <div class="break-mode-topline">
+          <div>
+            <p class="break-mode-title">Break Mode</p>
+            <p id="breakModeStatus" class="break-mode-copy">Нажмите для старта</p>
+          </div>
+          <div class="break-mode-scoreboard">
+            <span class="break-pill">Очки <strong id="breakModeScore">0</strong></span>
+            <span class="break-pill">Рекорд <strong id="breakModeBest">0</strong></span>
+          </div>
+        </div>
+        <div class="break-mode-actions">
+          <button id="breakModeClose" class="ghost-button" type="button">Закрыть</button>
+          <button id="breakModeRestart" class="ghost-button" type="button" hidden>Еще раз</button>
+        </div>
+        <canvas id="breakModeCanvas" class="break-mode-canvas" width="280" height="420" aria-label="Break Mode mini game"></canvas>
+      </section>
 
       <section class="quick-actions" aria-label="Действия формы">
         <button id="applyPreview" class="primary-button" type="button">Применить в форму</button>
@@ -47,6 +64,7 @@
                 <button id="loadDraft" class="menu-item" type="button">Показать предложения</button>
                 <button id="exampleDoctor" class="menu-item" type="button">Пример врача</button>
                 <button id="exampleCaregiver" class="menu-item" type="button">Пример родителя</button>
+                <button id="breakModeTrigger" class="menu-item secret-break-trigger" type="button" title="Break Mode">Перерыв</button>
               </div>
             </div>
 
