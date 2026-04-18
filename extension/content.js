@@ -10,32 +10,32 @@ const TARGET_REGISTRY = {
   'medical-records': {
     selector: '[data-action="switch-tab"][data-tab="medicalRecords"]',
     tabKey: 'medicalRecords',
-    verify: { activeTab: 'medicalRecords' }
+    verify: { activeTab: 'medicalRecords', panelSelector: '.readonly-card[data-document-title="Медицинские записи"]' }
   },
   assignments: {
     selector: '[data-action="switch-tab"][data-tab="assignments"]',
     tabKey: 'assignments',
-    verify: { activeTab: 'assignments' }
+    verify: { activeTab: 'assignments', panelSelector: '.readonly-card[data-document-title="Назначения"]' }
   },
   diaries: {
     selector: '[data-action="switch-tab"][data-tab="diaries"]',
     tabKey: 'diaries',
-    verify: { activeTab: 'diaries' }
+    verify: { activeTab: 'diaries', panelSelector: '.readonly-card[data-document-title="Дневниковые записи"]' }
   },
   diagnoses: {
     selector: '[data-action="switch-tab"][data-tab="diagnoses"]',
     tabKey: 'diagnoses',
-    verify: { activeTab: 'diagnoses' }
+    verify: { activeTab: 'diagnoses', panelSelector: '.readonly-card[data-document-title="Диагнозы"]' }
   },
   files: {
     selector: '[data-action="switch-tab"][data-tab="files"]',
     tabKey: 'files',
-    verify: { activeTab: 'files' }
+    verify: { activeTab: 'files', panelSelector: '.readonly-card[data-document-title="Файлы"]' }
   },
   'discharge-summary': {
     selector: '[data-action="switch-tab"][data-tab="dischargeSummary"]',
     tabKey: 'dischargeSummary',
-    verify: { activeTab: 'dischargeSummary' }
+    verify: { activeTab: 'dischargeSummary', panelSelector: '.readonly-card[data-document-title="Выписной эпикриз"]' }
   },
   'audit-log': {
     selector: '[data-action="show-slot-audit"]',
@@ -43,6 +43,151 @@ const TARGET_REGISTRY = {
     verify: { toast: true }
   }
 };
+
+const ADVISOR_OVERLAY_STYLE_ID = 'damumed-advisor-overlay-style';
+const ADVISOR_OVERLAY_ID = 'damumed-advisor-overlay';
+
+function ensureAdvisorOverlayStyles() {
+  if (document.getElementById(ADVISOR_OVERLAY_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = ADVISOR_OVERLAY_STYLE_ID;
+  style.textContent = `
+    #${ADVISOR_OVERLAY_ID} {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.34);
+      backdrop-filter: blur(2px);
+      pointer-events: none;
+    }
+    #${ADVISOR_OVERLAY_ID}[data-visible="true"] {
+      display: flex;
+    }
+    #${ADVISOR_OVERLAY_ID} .damumed-advisor-modal {
+      width: min(700px, calc(100vw - 40px));
+      border-radius: 26px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.985), rgba(244,251,250,0.985));
+      border: 1px solid rgba(13, 148, 136, 0.18);
+      box-shadow: 0 32px 90px rgba(15, 23, 42, 0.28);
+      padding: 28px 30px 30px;
+      text-align: center;
+      pointer-events: auto;
+    }
+    #${ADVISOR_OVERLAY_ID} .damumed-advisor-label {
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #0f766e;
+    }
+    #${ADVISOR_OVERLAY_ID} .damumed-advisor-stage {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(13, 148, 136, 0.12);
+      color: #0f766e;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    #${ADVISOR_OVERLAY_ID} .damumed-advisor-question {
+      margin: 18px 0 0;
+      font-size: 28px;
+      line-height: 1.4;
+      font-weight: 700;
+      color: #0f172a;
+      white-space: pre-wrap;
+    }
+    #${ADVISOR_OVERLAY_ID} .damumed-advisor-completion {
+      margin: 18px 0 0;
+      font-size: 18px;
+      line-height: 1.5;
+      color: #334155;
+      white-space: pre-wrap;
+    }
+    @media (max-width: 860px) {
+      #${ADVISOR_OVERLAY_ID} {
+        padding: 14px;
+      }
+      #${ADVISOR_OVERLAY_ID} .damumed-advisor-modal {
+        width: 100%;
+        padding: 22px 18px 24px;
+      }
+      #${ADVISOR_OVERLAY_ID} .damumed-advisor-question {
+        font-size: 22px;
+      }
+    }
+  `;
+  document.documentElement.appendChild(style);
+}
+
+function ensureAdvisorOverlay() {
+  ensureAdvisorOverlayStyles();
+  let overlay = document.getElementById(ADVISOR_OVERLAY_ID);
+  if (overlay) return overlay;
+  overlay = document.createElement('div');
+  overlay.id = ADVISOR_OVERLAY_ID;
+  overlay.setAttribute('data-visible', 'false');
+  overlay.innerHTML = `
+    <div class="damumed-advisor-modal" role="dialog" aria-live="polite" aria-label="Уточняющий вопрос советчика">
+      <div class="damumed-advisor-label">Нужно уточнить</div>
+      <div class="damumed-advisor-stage" hidden></div>
+      <p class="damumed-advisor-question"></p>
+      <p class="damumed-advisor-completion" hidden></p>
+    </div>
+  `;
+  document.documentElement.appendChild(overlay);
+  return overlay;
+}
+
+function updateAdvisorQuestionOverlay({ visible = false, mode = 'question', question = '', stageLabel = '', completionTitle = '', completionMessage = '' } = {}) {
+  const overlay = ensureAdvisorOverlay();
+  const labelNode = overlay.querySelector('.damumed-advisor-label');
+  const stageNode = overlay.querySelector('.damumed-advisor-stage');
+  const questionNode = overlay.querySelector('.damumed-advisor-question');
+  const completionNode = overlay.querySelector('.damumed-advisor-completion');
+  if (!visible || !String(question || '').trim()) {
+    if (!(mode === 'completed' && String(completionMessage || '').trim())) {
+      overlay.setAttribute('data-visible', 'false');
+      labelNode.textContent = 'Нужно уточнить';
+      questionNode.textContent = '';
+      completionNode.hidden = true;
+      completionNode.textContent = '';
+      stageNode.hidden = true;
+      stageNode.textContent = '';
+      return { ok: true, visible: false };
+    }
+  }
+  if (mode === 'completed') {
+    labelNode.textContent = String(completionTitle || 'Сбор данных завершен').trim();
+    questionNode.textContent = '';
+    stageNode.hidden = true;
+    stageNode.textContent = '';
+    completionNode.hidden = false;
+    completionNode.textContent = String(completionMessage || 'Черновик формы подготовлен. Проверьте и подтвердите заполнение.').trim();
+    overlay.setAttribute('data-visible', 'true');
+    return { ok: true, visible: true, mode: 'completed', completionMessage: completionNode.textContent };
+  }
+  labelNode.textContent = 'Нужно уточнить';
+  questionNode.textContent = String(question || '').trim();
+  completionNode.hidden = true;
+  completionNode.textContent = '';
+  if (String(stageLabel || '').trim()) {
+    stageNode.hidden = false;
+    stageNode.textContent = String(stageLabel || '').trim();
+  } else {
+    stageNode.hidden = true;
+    stageNode.textContent = '';
+  }
+  overlay.setAttribute('data-visible', 'true');
+  return { ok: true, visible: true, question: questionNode.textContent, stageLabel: stageNode.hidden ? '' : stageNode.textContent };
+}
 
 function visible(node) {
   return Boolean(node && node.offsetParent !== null);
@@ -122,6 +267,20 @@ function visibleDocuments() {
     }));
 }
 
+function visibleSlotCards() {
+  return Array.from(document.querySelectorAll('.slot-card[data-appointment-id]'))
+    .filter(visible)
+    .map((node) => ({
+      slot_id: node.getAttribute('data-slot-id') || '',
+      appointment_id: node.getAttribute('data-appointment-id') || '',
+      patient_id: node.getAttribute('data-patient-id') || '',
+      patient_name: node.getAttribute('data-patient-name') || '',
+      normalized_patient_name: normalizeLabel(node.getAttribute('data-patient-name') || ''),
+      selector: selectorForNode(node)
+    }))
+    .filter((item) => item.appointment_id);
+}
+
 function inferScreenId() {
   if (document.querySelector('#frmInspectionResult')) return 'inspection';
   if (document.querySelector('#schedule')) return 'schedule';
@@ -135,16 +294,24 @@ function selectedAppointmentId() {
   return document.querySelector('[data-appointment-id]')?.getAttribute('data-appointment-id') || null;
 }
 
+function patientScopedScreenId() {
+  const screenId = inferScreenId();
+  if (screenId === 'schedule') return null;
+  return screenId;
+}
+
 function selectedPatientId() {
-  if (inferScreenId() !== 'inspection') return null;
-  return document.querySelector('[data-screen="inspection"][data-patient-id]')?.getAttribute('data-patient-id')
+  const screenId = patientScopedScreenId();
+  if (!screenId) return null;
+  return document.querySelector(`[data-screen="${cssEscape(screenId)}"][data-patient-id]`)?.getAttribute('data-patient-id')
     || document.querySelector('[data-patient-id]')?.getAttribute('data-patient-id')
     || null;
 }
 
 function selectedPatientName() {
-  if (inferScreenId() !== 'inspection') return null;
-  return document.querySelector('[data-screen="inspection"][data-patient-name]')?.getAttribute('data-patient-name')
+  const screenId = patientScopedScreenId();
+  if (!screenId) return null;
+  return document.querySelector(`[data-screen="${cssEscape(screenId)}"][data-patient-name]`)?.getAttribute('data-patient-name')
     || document.querySelector('[data-patient-name]')?.getAttribute('data-patient-name')
     || null;
 }
@@ -282,44 +449,53 @@ async function verifyActionPlan(actionPlan) {
   if (intent === 'open_tab') {
     const registryItem = TARGET_REGISTRY[target];
     const activeTab = activeTabKey();
-    const ok = registryItem?.verify?.activeTab ? activeTab === registryItem.verify.activeTab : Boolean(document.querySelector(registryItem?.selector || ''));
+    const panelLoaded = registryItem?.verify?.panelSelector ? Boolean(document.querySelector(registryItem.verify.panelSelector)) : true;
+    const ok = registryItem?.verify?.activeTab
+      ? activeTab === registryItem.verify.activeTab && panelLoaded
+      : Boolean(document.querySelector(registryItem?.selector || ''));
     return {
       ok,
       expected: registryItem?.verify || null,
-      actual: { screen_id: inferScreenId(), activeTab },
-      reason: ok ? 'target_tab_active' : 'target_tab_not_active'
+      actual: { screen_id: inferScreenId(), activeTab, panelLoaded },
+      reason: ok ? 'target_tab_active' : (activeTab !== registryItem?.verify?.activeTab ? 'target_tab_not_active' : 'target_tab_panel_not_loaded')
     };
   }
-  if (intent === 'open_patient') {
+  if (intent === 'open_patient' || intent === 'open_primary_visit') {
+    const patientId = selectedPatientId();
     const patientName = selectedPatientName();
     const expectedName = actionPlan?.matchedPatient?.full_name || actionPlan?.patientQuery || '';
     const expectedTokens = commandTokens(expectedName);
     const normalizedPatientName = normalizeCommand(patientName || '');
-    const ok = inferScreenId() === 'inspection' && (
-      !expectedTokens.length || expectedTokens.some((token) => normalizedPatientName.includes(normalizeCommand(token)))
-    );
+    const nameMatches = expectedTokens.length
+      ? expectedTokens.every((token) => normalizedPatientName.includes(normalizeCommand(token)))
+      : Boolean(normalizedPatientName);
+    const idMatches = actionPlan?.matchedPatient?.patient_id ? actionPlan.matchedPatient.patient_id === patientId : true;
+    const inspectionLoaded = Boolean(document.querySelector('#frmInspectionResult'));
+    const ok = inferScreenId() === 'inspection' && inspectionLoaded && idMatches && nameMatches;
     return {
       ok,
-      expected: expectedName,
-      actual: { screen_id: inferScreenId(), selected_patient_name: patientName, selected_appointment_id: selectedAppointmentId() },
-      reason: ok ? 'patient_opened' : 'patient_not_opened'
+      expected: { patient_id: actionPlan?.matchedPatient?.patient_id || null, patient_name: expectedName },
+      actual: { screen_id: inferScreenId(), selected_patient_id: patientId, selected_patient_name: patientName, selected_appointment_id: selectedAppointmentId(), inspectionLoaded },
+      reason: ok ? 'patient_opened' : (inspectionLoaded ? 'patient_not_opened' : 'inspection_not_loaded')
     };
   }
   if (intent === 'save_record' || intent === 'complete_service') {
-    const ok = inferScreenId() === 'schedule' || Boolean(document.querySelector('.status-pill.completed'));
+    const screenId = inferScreenId();
+    const statusText = document.querySelector('.status-pill')?.textContent?.trim() || '';
+    const ok = screenId === 'schedule' || /выполнено/i.test(statusText);
     return {
       ok,
       expected: 'completed_or_schedule',
-      actual: { screen_id: inferScreenId(), statusText: document.querySelector('.status-pill')?.textContent?.trim() || '' },
+      actual: { screen_id: screenId, statusText },
       reason: ok ? 'record_saved_or_completed' : 'record_not_completed'
     };
   }
   if (intent === 'return_to_schedule') {
-    const ok = inferScreenId() === 'schedule';
+    const ok = inferScreenId() === 'schedule' && Boolean(document.querySelector('#schedule')) && visibleSlotCards().length > 0;
     return {
       ok,
       expected: 'schedule',
-      actual: { screen_id: inferScreenId(), hash: window.location.hash },
+      actual: { screen_id: inferScreenId(), hash: window.location.hash, visibleSlots: visibleSlotCards().length },
       reason: ok ? 'schedule_opened' : 'schedule_not_opened'
     };
   }
@@ -658,6 +834,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       visible_actions: visibleButtonActions(),
       visible_links: visibleLinks(),
       visible_documents: visibleDocuments(),
+      visible_slot_cards: visibleSlotCards(),
       selected_patient_id: selectedPatientId(),
       selected_patient_name: selectedPatientName(),
       selected_appointment_id: selectedAppointmentId(),
@@ -668,6 +845,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'highlight-preview') {
     highlightOperations(message.domOperations || []);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'update-advisor-question-overlay') {
+    sendResponse(updateAdvisorQuestionOverlay(message.payload || {}));
+    return true;
+  }
+
+  if (message.type === 'refresh-inspection-page-data') {
+    window.dispatchEvent(new CustomEvent('damumed-assistant-refresh', {
+      detail: { reason: message.reason || 'assistant' }
+    }));
     sendResponse({ ok: true });
     return true;
   }

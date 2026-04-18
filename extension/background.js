@@ -4,6 +4,13 @@ const API_BASE = 'http://localhost:3030';
 const previewCache = new Map();
 const speechSessionCache = new Map();
 
+function advisorStageLabel(stage = '') {
+  if (stage === 'complaints') return 'Жалобы';
+  if (stage === 'anamnesis') return 'Анамнез / динамика';
+  if (stage === 'functional_impact') return 'Функциональное влияние';
+  return '';
+}
+
 function isNavigationIntent(type = '') {
   return /^open_|^switch_|return_to_schedule|navigate|save_record/.test(type);
 }
@@ -19,6 +26,14 @@ async function askContent(tabId, message) {
 
 function isSandboxUrl(url) {
   return typeof url === 'string' && (url.startsWith('http://localhost:3030') || url.startsWith('http://127.0.0.1:3030'));
+}
+
+function normalizeExtensionErrorMessage(error) {
+  const message = error?.message || String(error || '');
+  if (/advisor_context_missing|patient_not_found/i.test(message)) {
+    return 'Откройте карточку пациента или форму приема, чтобы советчик видел медицинский контекст.';
+  }
+  return message;
 }
 
 async function ensureSandboxTab(tab) {
@@ -51,6 +66,29 @@ async function getScreenContext(tabId) {
 async function cacheAndHighlight(tabId, preview) {
   previewCache.set(tabId, preview);
   await askContent(tabId, { type: 'highlight-preview', domOperations: preview.domOperations || [] });
+}
+
+async function notifyInspectionPageUpdated(tabId, reason = 'advisor') {
+  return askContent(tabId, { type: 'refresh-inspection-page-data', reason }).catch(() => null);
+}
+
+async function syncAdvisorQuestionOverlay(tabId, payload, screenContext) {
+  const visible = Boolean(
+    screenContext?.screen_id === 'inspection'
+    && screenContext?.selected_appointment_id
+    && payload?.interview_reasoning?.next_best_question
+  );
+  return askContent(tabId, {
+    type: 'update-advisor-question-overlay',
+    payload: {
+      visible: visible || Boolean(payload?.interview_reasoning?.advisor_complete),
+      mode: payload?.interview_reasoning?.advisor_complete ? 'completed' : 'question',
+      question: visible ? payload.interview_reasoning.next_best_question : '',
+      stageLabel: visible ? advisorStageLabel(payload?.interview_reasoning?.stage) : '',
+      completionTitle: payload?.interview_reasoning?.completion_title || 'Сбор данных завершен',
+      completionMessage: payload?.interview_reasoning?.completion_message || 'Черновик формы подготовлен. Проверьте и подтвердите заполнение.'
+    }
+  }).catch(() => null);
 }
 
 async function postJson(path, body) {
@@ -103,22 +141,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       let execution = null;
       let refreshedContext = screenContext;
-      if (message.autoExecute && (observation.preview?.domOperations || []).length) {
-        const intentType = observation.preview?.intent?.type || '';
-        if (isNavigationIntent(intentType)) {
+      if (message.autoExecute) {
+        if (observation.actionPlan) {
           execution = await askContent(tab.id, {
-            type: 'execute-agent-command',
-            command: message.command || message.transcriptDelta || ''
+            type: 'execute-action-plan',
+            actionPlan: observation.actionPlan
           });
-        }
-        if (!execution?.ok) {
-          const previewExecution = await askContent(tab.id, {
+        } else if ((observation.preview?.domOperations || []).length) {
+          execution = await askContent(tab.id, {
             type: 'apply-preview',
             domOperations: observation.preview.domOperations || []
           });
-          execution = execution
-            ? { ...previewExecution, directFallback: execution }
-            : previewExecution;
         }
         refreshedContext = await getScreenContext(tab.id).catch(() => screenContext);
       }
@@ -178,6 +211,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           failed: { reason: commandResult.fallbackReason || 'llm_fallback_required' }
         };
         auditResult = commandResult.fallbackReason || 'llm_fallback_required';
+      } else if (commandResult.fallbackReason === 'patient_slot_not_found' && !(actionPlan?.operations || []).length) {
+        domExecution = {
+          ok: false,
+          verification: { ok: false, reason: 'patient_slot_not_found' },
+          failed: {
+            reason: 'patient_slot_not_found',
+            matchedPatient: commandResult.matchedPatient || null
+          }
+        };
+        auditResult = 'patient_slot_not_found';
       } else if (actionPlan) {
         domExecution = await askContent(tab.id, {
           type: 'execute-action-plan',
@@ -202,16 +245,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       const debug = {
-        transcript: message.transcript,
+        rawTranscript: message.transcript,
         normalizedTranscript: commandResult?.debug?.normalization?.normalizedText || commandResult?.debug?.normalizedTranscript || null,
+        sttProvider: message.sttProvider || null,
         sttConfidence: message.sttConfidence || null,
         speaker: message.speakerTag || null,
-        parsedCommand: commandResult,
-        commandConfidence: commandResult?.confidence ?? null,
-        extractedPatientQuery: commandResult?.patientQuery || null,
-        matchCandidates: commandResult?.matchCandidates || [],
-        finalChosenAction: actionPlan || null,
-        actionTarget: actionPlan?.actionTarget || commandResult?.actionTarget || null,
+        deterministicCommandResult: observation.deterministicCommandResult || null,
+        finalCommandResult: commandResult,
+        patientQuery: commandResult?.patientQuery || null,
+        patientCandidates: commandResult?.matchCandidates || [],
+        llmFallbackInvoked: Boolean(commandResult?.debug?.llmFallbackInvoked),
+        llmFallbackReason: commandResult?.debug?.llmFallbackReason || commandResult?.fallbackReason || null,
+        finalActionPlan: actionPlan || null,
         blockReason: domExecution?.failed?.reason || domExecution?.verification?.reason || null,
         domExecution,
         verification: domExecution?.verification || null
@@ -245,6 +290,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === 'apply-preview') {
       const screenContext = await getScreenContext(tab.id);
+      if (!previewCache.has(tab.id) && !screenContext.selected_appointment_id) {
+        throw new Error('Откройте прием пациента или сначала получите черновик, чтобы применить изменения.');
+      }
       const preview = previewCache.get(tab.id) || await fetch(`${API_BASE}/api/drafts/${screenContext.selected_appointment_id}/apply-preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
@@ -334,6 +382,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message.type === 'get-openai-stt-config') {
+      const config = await postJson('/api/speech/openai/config', {});
+      sendResponse({ ok: true, config });
+      return;
+    }
+
+    if (message.type === 'openai-transcribe-audio') {
+      const screenContext = await getScreenContext(tab.id);
+      const payload = await postJson('/api/speech/openai/transcribe', {
+        audioBase64: message.audioBase64,
+        mimeType: message.mimeType,
+        language: message.language || 'ru',
+        screenContext
+      });
+      sendResponse({ ok: true, screenContext, ...payload });
+      return;
+    }
+
     if (message.type === 'stop-live-session') {
       const session = speechSessionCache.get(tab.id);
       if (!session) {
@@ -367,6 +433,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         if (observation.preview) {
           await cacheAndHighlight(tab.id, observation.preview);
+        }
+        if (screenContext.screen_id === 'inspection' && screenContext.selected_appointment_id) {
+          await notifyInspectionPageUpdated(tab.id, 'voice-observe');
         }
         sendResponse({
           ok: true,
@@ -410,20 +479,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         hints: result.hints || []
       };
       await cacheAndHighlight(tab.id, preview);
+      if (screenContext.screen_id === 'inspection' && screenContext.selected_appointment_id) {
+        await notifyInspectionPageUpdated(tab.id, 'transcript-ingest');
+      }
       sendResponse({ ok: true, screenContext, transcript: result, preview });
       return;
     }
 
     if (message.type === 'advisor-analyze') {
       const screenContext = await getScreenContext(tab.id);
-      if (screenContext.screen_id !== 'inspection') {
-        throw new Error('Откройте форму приема пациента, чтобы советчик видел текущий контекст.');
+      const normalizedScreenId = String(screenContext.screen_id || '').replace(/-/g, '_');
+      const isInspectionContext = normalizedScreenId === 'inspection' && screenContext.selected_appointment_id;
+      const isPatientCardContext = ['patient_card', 'patient', 'patient_profile'].includes(normalizedScreenId)
+        && screenContext.selected_patient_id;
+      if (!isInspectionContext && !isPatientCardContext) {
+        throw new Error('Откройте карточку пациента или форму приема, чтобы советчик видел медицинский контекст.');
       }
       const payload = await postJson('/api/advisor/analyze', {
-        appointmentId: screenContext.selected_appointment_id,
+        appointmentId: screenContext.selected_appointment_id || null,
         question: message.question,
         screenContext
       });
+      if (payload.preview) {
+        previewCache.set(tab.id, payload.preview);
+      }
+      await syncAdvisorQuestionOverlay(tab.id, payload, screenContext);
+      if (normalizedScreenId === 'inspection' && screenContext.selected_appointment_id) {
+        await notifyInspectionPageUpdated(tab.id, 'advisor-analyze');
+      }
       sendResponse({ ok: true, screenContext, ...payload });
       return;
     }
@@ -500,7 +583,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     throw new Error(`Unsupported message type: ${message.type}`);
   })().then(sendResponse).catch((error) => {
-    sendResponse({ ok: false, error: error.message });
+    sendResponse({ ok: false, error: normalizeExtensionErrorMessage(error) });
   });
   return true;
 });

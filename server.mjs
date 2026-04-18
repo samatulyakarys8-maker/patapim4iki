@@ -25,7 +25,8 @@ import {
   stopSpeechSession,
   searchPatients
 } from './lib/agent.mjs';
-import { analyzeAdvisor } from './lib/advisor.mjs';
+import { AdvisorContextError, analyzeAdvisor } from './lib/advisor.mjs';
+import { getOpenAiSttConfig, transcribeOpenAiAudio } from './lib/openai-stt.mjs';
 import { buildPsychologistsFromRuntime, generatePsychologistSchedule } from './lib/scheduler.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -350,6 +351,7 @@ async function handleApi(req, res, url) {
       appointment,
       patient: getPatientById(runtime, appointment.patient_id),
       draftState: appointment.draft_state,
+      advisor_ui: appointment.draft_state?.advisor_state?.ui || null,
       hints: buildHints(runtime, { screen_id: 'inspection', selected_appointment_id: appointmentId })
     });
   }
@@ -533,6 +535,69 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/speech/openai/config') {
+    const config = getOpenAiSttConfig();
+    return sendJson(res, 200, {
+      ok: true,
+      provider: config.provider,
+      apiKeyConfigured: config.apiKeyConfigured,
+      model: config.model,
+      preferred: config.preferred,
+      language: config.language
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/speech/openai/transcribe') {
+    const config = getOpenAiSttConfig();
+    if (!config.apiKeyConfigured) {
+      return sendJson(res, 400, {
+        ok: false,
+        provider: 'openai',
+        error: 'OPENAI_API_KEY is not configured on the local backend.'
+      });
+    }
+    const body = await readBody(req);
+    try {
+      const transcript = await transcribeOpenAiAudio({
+        audioBase64: body.audioBase64,
+        mimeType: body.mimeType || 'audio/webm',
+        apiKey: process.env.OPENAI_API_KEY,
+        model: config.model,
+        endpoint: config.endpoint,
+        language: body.language || config.language,
+        prompt: body.prompt || config.prompt
+      });
+      addAudit(createAuditEntry({
+        actorType: 'speech',
+        actionType: 'openai_transcribe_audio',
+        screenId: inferScreenId(body.screenContext || {}),
+        entityRefs: { appointment_id: body.screenContext?.selected_appointment_id || null },
+        payload: {
+          provider: 'openai',
+          model: config.model,
+          mimeType: body.mimeType || 'audio/webm',
+          audioBytes: body.audioBase64 ? Buffer.byteLength(body.audioBase64, 'base64') : 0
+        },
+        result: transcript.text ? 'transcribed' : 'empty'
+      }));
+      await persistRuntime();
+      return sendJson(res, 200, {
+        ok: true,
+        provider: 'openai',
+        model: config.model,
+        text: transcript.text,
+        raw: transcript.raw
+      });
+    } catch (error) {
+      return sendJson(res, 502, {
+        ok: false,
+        provider: 'openai',
+        model: config.model,
+        error: error.message || 'OpenAI transcription failed.'
+      });
+    }
+  }
+
   if (req.method === 'POST' && /^\/api\/speech\/session\/[^/]+\/chunk$/.test(url.pathname)) {
     const sessionId = url.pathname.split('/')[4];
     const session = runtime.speechSessions[sessionId];
@@ -657,11 +722,29 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/advisor/analyze') {
     const body = await readBody(req);
-    const advisor = await analyzeAdvisor(runtime, {
-      appointmentId: body.appointmentId,
-      question: body.question,
-      screenContext: body.screenContext || {}
-    });
+    let advisor;
+    try {
+      advisor = await analyzeAdvisor(runtime, {
+        appointmentId: body.appointmentId,
+        question: body.question,
+        screenContext: body.screenContext || {}
+      });
+    } catch (error) {
+      if (error instanceof AdvisorContextError) {
+        return sendJson(res, 200, {
+          ok: false,
+          error: error.code,
+          message: error.message,
+          advisor_context: {
+            screen_scope: 'unsupported',
+            patient_id: body.screenContext?.selected_patient_id || null,
+            appointment_id: body.appointmentId || body.screenContext?.selected_appointment_id || null,
+            can_patch_draft: false
+          }
+        });
+      }
+      throw error;
+    }
     addAudit(createAuditEntry({
       actorType: 'advisor',
       actionType: 'advisor_analyze',
@@ -674,7 +757,10 @@ async function handleApi(req, res, url) {
       result: advisor.provider?.type || 'unknown'
     }));
     await persistRuntime();
-    return sendJson(res, 200, { ok: true, ...advisor });
+    const preview = advisor.advisor_context?.appointment_id
+      ? buildApplyPreview(runtime, advisor.advisor_context.appointment_id)
+      : null;
+    return sendJson(res, 200, { ok: true, ...advisor, preview });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/transcripts/ingest') {
@@ -699,6 +785,9 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && /^\/api\/drafts\//.test(url.pathname)) {
     const appointmentId = url.pathname.split('/')[3];
+    if (!appointmentId || !getAppointmentById(runtime, appointmentId)) {
+      return sendJson(res, 404, { ok: false, error: 'Appointment not found for draft state.' });
+    }
     const draftState = getDraftState(runtime, appointmentId);
     return sendJson(res, 200, {
       draftState,
@@ -709,6 +798,9 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && /^\/api\/drafts\/[^/]+\/apply-preview$/.test(url.pathname)) {
     const appointmentId = url.pathname.split('/')[3];
+    if (!appointmentId || !getAppointmentById(runtime, appointmentId)) {
+      return sendJson(res, 404, { ok: false, error: 'Appointment not found for apply preview.' });
+    }
     const preview = buildApplyPreview(runtime, appointmentId);
     addAudit(createAuditEntry({
       actorType: 'agent',
@@ -724,6 +816,9 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && /^\/api\/drafts\/[^/]+\/mark-applied$/.test(url.pathname)) {
     const appointmentId = url.pathname.split('/')[3];
+    if (!appointmentId || !getAppointmentById(runtime, appointmentId)) {
+      return sendJson(res, 404, { ok: false, error: 'Appointment not found for mark-applied.' });
+    }
     const body = await readBody(req);
     const draftState = markPreviewApplied(runtime, appointmentId, body.patchIds || []);
     await persistRuntime();

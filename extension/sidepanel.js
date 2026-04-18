@@ -1,6 +1,13 @@
 import { isBreakModeCommand } from './break-mode.js';
 import { createBreakModeWidget } from './break-mode-widget.js';
 
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason?.message || event.reason || '';
+  if (/patient_not_found|advisor_context_missing/i.test(String(reason))) {
+    event.preventDefault();
+  }
+}, { capture: true });
+
 const chatTimelineEl = document.querySelector('#chatTimeline');
 const chatInputEl = document.querySelector('#chatInput');
 const globalStatusEl = document.querySelector('#globalStatus');
@@ -30,6 +37,7 @@ const VOICE_IDLE_ICON = `
   </svg>
 `;
 const VOICE_RECORDING_ICON = '<span class="stop-icon" aria-hidden="true"></span>';
+const EXTENSION_BUILD_ID = 'voice-router-break-merge-2026-04-19-0015';
 
 const FIELD_LABELS = {
   tbmedicalfinal: 'Заключение',
@@ -59,11 +67,20 @@ const state = {
   audioContext: null,
   sourceNode: null,
   processorNode: null,
+  mediaRecorder: null,
+  openAiTranscribeInFlight: false,
+  openAiAudioChunks: [],
+  openAiPcmChunks: [],
+  lastOpenAiSubmittedBytes: 0,
+  lastOpenAiTranscript: '',
+  lastOpenAiError: '',
   realtimeSocket: null,
   activeProvider: null,
   advisorModeEnabled: false,
   latestScreenContext: null,
   latestSuggestions: [],
+  lastProcessedSpeechKey: '',
+  lastProcessedSpeechAt: 0,
   breakModeWidget: null
 };
 
@@ -210,7 +227,7 @@ function createCard(card) {
 }
 
 function showError(error) {
-  const message = error?.message || String(error);
+  const message = advisorErrorMessage(error);
   setStatus(message);
   appendMessage({
     role: 'assistant',
@@ -219,6 +236,35 @@ function showError(error) {
     tone: 'error'
   });
 }
+
+function advisorErrorMessage(resultOrError) {
+  const code = resultOrError?.error || resultOrError?.code || '';
+  const message = resultOrError?.message || resultOrError?.details || resultOrError?.error || String(resultOrError || '');
+  if (/patient_slot_not_found/i.test(code) || /patient_slot_not_found/i.test(message)) {
+    return 'Пациент распознан, но в текущем расписании нет открываемого приема для этого имени.';
+  }
+  if (/advisor_context_missing|patient_not_found|appointment_not_found/i.test(code)
+    || /advisor_context_missing|patient_not_found/i.test(message)) {
+    return 'Откройте карточку пациента или форму приема, чтобы советчик видел медицинский контекст.';
+  }
+  return message || 'Советчик сейчас недоступен.';
+}
+
+window.addEventListener('unhandledrejection', (event) => {
+  const message = advisorErrorMessage(event.reason);
+  if (/карточку пациента|форму приема|Советчик|patient_not_found|advisor_context_missing/i.test(message)) {
+    event.preventDefault();
+    showError(new Error(message));
+  }
+});
+
+window.addEventListener('error', (event) => {
+  const message = advisorErrorMessage(event.error || event.message);
+  if (/карточку пациента|форму приема|patient_not_found|advisor_context_missing/i.test(message)) {
+    event.preventDefault();
+    showError(new Error(message));
+  }
+});
 
 function ensureBreakModeWidget() {
   if (!state.breakModeWidget) {
@@ -297,6 +343,87 @@ function suggestionCards(patches) {
   }));
 }
 
+function compactJson(value) {
+  if (value == null) return '';
+  try {
+    const text = JSON.stringify(value, null, 2);
+    return text.length > 420 ? `${text.slice(0, 417)}...` : text;
+  } catch {
+    return String(value);
+  }
+}
+
+function patientCandidateText(candidate) {
+  if (!candidate?.patient) return 'Кандидат недоступен';
+  const reasons = Array.isArray(candidate.reasons) && candidate.reasons.length
+    ? `\n${candidate.reasons.join(', ')}`
+    : '';
+  return `${candidate.patient.full_name} • score ${candidate.score}${reasons}`;
+}
+
+function commandDebugCards(debug = {}, result = {}) {
+  const cards = [];
+  if (debug.rawTranscript || debug.normalizedTranscript) {
+    cards.push({
+      title: 'Транскрипт',
+      text: [
+        debug.rawTranscript ? `Сырой: ${debug.rawTranscript}` : null,
+        debug.normalizedTranscript ? `Нормализованный: ${debug.normalizedTranscript}` : null
+      ].filter(Boolean).join('\n'),
+      tags: [
+        debug.sttProvider || 'stt: n/a',
+        debug.sttConfidence != null ? formatConfidence(debug.sttConfidence) : 'confidence: n/a'
+      ]
+    });
+  }
+  if (debug.deterministicCommandResult) {
+    cards.push({
+      title: 'Детерминированный разбор',
+      text: compactJson({
+        intent: debug.deterministicCommandResult.intent,
+        actionTarget: debug.deterministicCommandResult.actionTarget,
+        patientQuery: debug.deterministicCommandResult.patientQuery,
+        confidence: debug.deterministicCommandResult.confidence,
+        fallbackReason: debug.deterministicCommandResult.fallbackReason
+      }),
+      tags: [debug.deterministicCommandResult.debug?.provider || 'deterministic']
+    });
+  }
+  if (Array.isArray(debug.patientCandidates) && debug.patientCandidates.length) {
+    cards.push({
+      title: 'Кандидаты пациента',
+      text: debug.patientCandidates.slice(0, 3).map(patientCandidateText).join('\n\n'),
+      tags: [debug.patientQuery || 'без patientQuery']
+    });
+  }
+  if (debug.finalCommandResult?.matchedPatient) {
+    cards.push({
+      title: 'Распознанный пациент',
+      text: `${debug.finalCommandResult.matchedPatient.full_name}${debug.finalCommandResult.matchedPatient.patient_id ? ` • ${debug.finalCommandResult.matchedPatient.patient_id}` : ''}`,
+      tags: [
+        debug.finalCommandResult.fallbackReason || 'patient matched',
+        debug.finalActionPlan?.operations?.length ? 'есть DOM-операции' : 'DOM-операций нет'
+      ]
+    });
+  }
+  cards.push({
+    title: 'Fallback и итог',
+    text: compactJson({
+      llmFallbackInvoked: Boolean(debug.llmFallbackInvoked),
+      llmFallbackReason: debug.llmFallbackReason || null,
+      finalIntent: result?.intent || debug.finalCommandResult?.intent || null,
+      actionTarget: result?.actionTarget || debug.finalActionPlan?.actionTarget || null,
+      verification: debug.verification?.reason || null,
+      blockReason: debug.blockReason || null
+    }),
+    tags: [
+      Boolean(debug.llmFallbackInvoked) ? 'LLM fallback' : 'без LLM',
+      debug.verification?.ok ? 'verify ok' : 'verify blocked'
+    ]
+  });
+  return cards;
+}
+
 function advisorCards(answer) {
   const cards = [];
 
@@ -349,13 +476,100 @@ function advisorCards(answer) {
   return cards;
 }
 
+function advisorContextLabel(scope) {
+  if (scope === 'inspection') return 'форма приема';
+  if (scope === 'patient_card') return 'карточка пациента';
+  return scope || 'неизвестно';
+}
+
+function advisorReasoningCards(payload) {
+  const reasoning = payload?.interview_reasoning;
+  if (!reasoning) return [];
+  const context = payload?.advisor_context || {};
+  const debug = payload?.advisor_debug || {};
+  const facts = (reasoning.new_facts || [])
+    .map((fact) => `- ${fact.field}: ${fact.value}`)
+    .join('\n') || 'Новых фактов нет.';
+  const missing = (reasoning.missing_fields || [])
+    .map((field) => `- ${field}`)
+    .join('\n') || 'Обязательные поля текущего этапа покрыты.';
+  const cards = [
+    {
+      title: 'Разбор советчика',
+      text: [
+        `Контекст: ${advisorContextLabel(context.screen_scope)}`,
+        `Стадия: ${reasoning.stage || 'не определена'}`,
+        `Следующий вопрос: ${reasoning.next_best_question || 'не выбран'}`,
+        `Почему: ${reasoning.question_reason || 'причина не указана'}`,
+        `Стадия завершена: ${reasoning.stage_complete ? 'да' : 'нет'}`,
+        `Можно обновлять черновик формы: ${context.can_patch_draft ? 'да' : 'нет'}`,
+        debug.model ? `Модель: ${debug.model}` : null,
+        `Fallback: ${debug.fallback_used ? 'да' : 'нет'}`
+      ].filter(Boolean).join('\n')
+    }
+  ];
+  if (debug.raw_deepgram_transcript || debug.normalized_transcript) {
+    cards.push({
+      title: 'Транскрипт для анализа',
+      text: [
+        `Raw: ${debug.raw_deepgram_transcript || ''}`,
+        `Normalized: ${debug.normalized_transcript || ''}`
+      ].join('\n')
+    });
+  }
+  cards.push(
+    {
+      title: 'Новые факты',
+      text: facts
+    },
+    {
+      title: 'Чего не хватает',
+      text: missing
+    }
+  );
+  return cards;
+}
+
 function renderAdvisorAnswer(payload, title = 'Советчик') {
   const answer = payload?.answer || {};
+  const reasoning = payload?.interview_reasoning || {};
+  const context = payload?.advisor_context || {};
+  const onPageQuestion = context.screen_scope === 'inspection' && reasoning.next_best_question;
+  const onPageCompletion = context.screen_scope === 'inspection' && reasoning.advisor_complete;
   appendMessage({
     role: 'assistant',
     title,
-    body: answer.summary || 'Я собрал доступные данные и подготовил следующий шаг.',
-    cards: advisorCards(answer)
+    body: onPageCompletion
+      ? 'Сбор данных завершен. Финальный preview вынесен в рабочий экран.'
+      : onPageQuestion
+      ? 'Уточняющий вопрос вынесен в центр страницы приема.'
+      : (answer.next_step || answer.summary || 'Я собрал доступные данные и подготовил следующий шаг.'),
+    cards: onPageCompletion
+      ? [
+          {
+            title: 'Статус',
+            text: reasoning.completion_message || 'Черновик формы подготовлен. Проверьте и подтвердите заполнение.'
+          },
+          {
+            title: 'Контекст',
+            text: `Стадия: завершено\nЧерновик формы ${context.can_patch_draft ? 'готов к проверке' : 'недоступен для прямого обновления'}`
+          }
+        ]
+      : onPageQuestion
+      ? [
+          {
+            title: 'Вопрос на странице',
+            text: reasoning.next_best_question
+          },
+          {
+            title: 'Контекст',
+            text: `Стадия: ${reasoning.stage || 'не определена'}\nЧерновик формы ${context.can_patch_draft ? 'можно обновлять' : 'пока не обновляется'}`
+          }
+        ]
+      : [
+          ...advisorCards(answer),
+          ...advisorReasoningCards(payload)
+        ]
   });
 
   if (answer.doctor_note) {
@@ -384,6 +598,32 @@ function toBase64(bytes) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
   }
   return btoa(binary);
+}
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return toBase64(bytes);
+}
+
+function normalizeSpeech(text) {
+  return String(text || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+}
+
+function looksLikeVoiceCommand(text) {
+  return /открой|перейди|вернись|назад|расписани|график|эпикриз|выписк|диагноз|дневник|файл|мед.?запис|медкарта|назначен|первичн|прием|осмотр|сохрани|заверши|отметь|пациент/i.test(String(text || ''));
+}
+
+function shouldHandleSpokenText(text, { isFinal = true } = {}) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return false;
+  if (!isFinal && !looksLikeVoiceCommand(normalized)) return false;
+  const now = Date.now();
+  if (normalized === state.lastProcessedSpeechKey && now - state.lastProcessedSpeechAt < 1800) {
+    return false;
+  }
+  state.lastProcessedSpeechKey = normalized;
+  state.lastProcessedSpeechAt = now;
+  return true;
 }
 
 function downsampleTo16Khz(float32Samples, inputSampleRate) {
@@ -415,8 +655,76 @@ function floatToPcm16(float32Samples) {
   return new Uint8Array(pcm.buffer);
 }
 
+function concatByteArrays(chunks) {
+  const totalLength = chunks.reduce((sum, chunk) => sum + (chunk?.length || 0), 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (!chunk?.length) continue;
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function pcm16ToWavBytes(pcmBytes, sampleRate = 16000, channels = 1, bitsPerSample = 16) {
+  const headerSize = 44;
+  const wav = new Uint8Array(headerSize + pcmBytes.length);
+  const view = new DataView(wav.buffer);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const byteRate = sampleRate * blockAlign;
+
+  wav.set([82, 73, 70, 70], 0); // RIFF
+  view.setUint32(4, 36 + pcmBytes.length, true);
+  wav.set([87, 65, 86, 69], 8); // WAVE
+  wav.set([102, 109, 116, 32], 12); // fmt
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  wav.set([100, 97, 116, 97], 36); // data
+  view.setUint32(40, pcmBytes.length, true);
+  wav.set(pcmBytes, headerSize);
+  return wav;
+}
+
 function tokenValue(tokenPayload) {
   return tokenPayload?.token || tokenPayload?.single_use_token || tokenPayload?.access_token || tokenPayload?.jwt || tokenPayload?.key;
+}
+
+async function openMicrophone() {
+  state.mediaStream ||= await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  });
+  return state.mediaStream;
+}
+
+async function startPcmAudioPump(sendPcmBytes) {
+  state.audioContext = new AudioContext();
+  state.sourceNode = state.audioContext.createMediaStreamSource(state.mediaStream);
+
+  if (!state.audioContext.audioWorklet || !globalThis.AudioWorkletNode) {
+    throw new Error('AudioWorklet недоступен в этом контексте Chrome.');
+  }
+
+  const workletUrl = chrome.runtime.getURL('audio-worklet.js');
+  await state.audioContext.audioWorklet.addModule(workletUrl);
+  state.processorNode = new AudioWorkletNode(state.audioContext, 'pcm16-worklet-processor', {
+    numberOfInputs: 1,
+    numberOfOutputs: 0
+  });
+  state.processorNode.port.onmessage = (event) => {
+    if (!state.isRecording) return;
+    sendPcmBytes(event.data);
+  };
+  state.sourceNode.connect(state.processorNode);
 }
 
 async function refreshContext({ silent = false } = {}) {
@@ -484,55 +792,147 @@ function isUnsupportedAdvisorError(resultOrError) {
   return /Unsupported message type:\s*advisor-analyze/i.test(message);
 }
 
+function isAdvisorSupportedContext(screenContext) {
+  const screenId = String(screenContext?.screen_id || '').replace(/-/g, '_');
+  return (screenId === 'inspection' && screenContext?.selected_appointment_id)
+    || (['patient_card', 'patient', 'patient_profile'].includes(screenId) && screenContext?.selected_patient_id);
+}
+
 async function fetchAdvisorDirect(question) {
   let screenContext = state.latestScreenContext;
-  if (!screenContext?.selected_appointment_id || screenContext.screen_id !== 'inspection') {
+  if (!isAdvisorSupportedContext(screenContext)) {
     const contextResult = await send({ type: 'refresh-context' });
     if (!contextResult.ok) {
-      throw new Error(contextResult.error || 'Не удалось получить контекст формы приема.');
+      return {
+        ok: false,
+        error: 'advisor_context_missing',
+        message: contextResult.error || 'Не удалось получить медицинский контекст.'
+      };
     }
     screenContext = contextResult.screenContext;
     state.latestScreenContext = screenContext;
   }
 
-  if (screenContext.screen_id !== 'inspection' || !screenContext.selected_appointment_id) {
-    throw new Error('Откройте форму приема пациента, чтобы советчик видел текущий контекст.');
+  if (!isAdvisorSupportedContext(screenContext)) {
+    return {
+      ok: false,
+      screenContext,
+      error: 'advisor_context_missing',
+      message: 'Откройте карточку пациента или форму приема, чтобы советчик видел медицинский контекст.'
+    };
   }
 
-  const response = await fetch('http://localhost:3030/api/advisor/analyze', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      appointmentId: screenContext.selected_appointment_id,
-      question,
-      screenContext
-    })
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || 'Советчик сейчас недоступен.');
+  try {
+    const response = await fetch('http://localhost:3030/api/advisor/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appointmentId: screenContext.selected_appointment_id || null,
+        question,
+        screenContext
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) {
+      return {
+        ok: false,
+        screenContext,
+        ...payload,
+        error: advisorErrorMessage(payload)
+      };
+    }
+    return { ok: true, screenContext, ...payload };
+  } catch (error) {
+    return {
+      ok: false,
+      screenContext,
+      error: advisorErrorMessage(error)
+    };
   }
-  return { ok: true, screenContext, ...payload };
 }
 
 async function askAdvisor(question, { quietUserMessage = false, title = 'Советчик' } = {}) {
   const text = String(question || '').trim();
-  if (!text) return;
-  try {
-    if (!quietUserMessage) {
-      appendMessage({ role: 'user', title: 'Врач', body: text });
-    }
-    setStatus('Советчик анализирует прием.');
-    let result = await send({ type: 'advisor-analyze', question: text });
-    if (!result.ok && isUnsupportedAdvisorError(result)) {
-      result = await fetchAdvisorDirect(text);
-    }
-    if (!result.ok) throw new Error(result.error || 'Советчик сейчас недоступен.');
-    renderAdvisorAnswer(result, title);
-    setStatus('Советчик подготовил подсказки.');
-  } catch (error) {
-    showError(error);
+  if (!text) return { ok: false, error: 'empty_question' };
+  if (!quietUserMessage) {
+    appendMessage({ role: 'user', title: 'Врач', body: text });
   }
+  setStatus('Советчик анализирует прием.');
+
+  const initialResult = await send({ type: 'advisor-analyze', question: text })
+    .catch((error) => ({ ok: false, error: advisorErrorMessage(error) }));
+  const result = !initialResult.ok && isUnsupportedAdvisorError(initialResult)
+    ? await fetchAdvisorDirect(text)
+    : initialResult;
+
+  if (!result.ok) {
+    showError(new Error(advisorErrorMessage(result)));
+    return result;
+  }
+
+  renderAdvisorAnswer(result, title);
+  setStatus('Советчик подготовил подсказки.');
+  return result;
+}
+
+async function handleVoiceCommand(text, { fromRecording = false, sttConfidence = null, speakerTag = null } = {}) {
+  const spoken = String(text || '').trim();
+  if (!spoken) return;
+  if (!fromRecording) {
+    appendMessage({ role: 'user', title: 'Команда врача', body: spoken });
+  }
+  setStatus('Выполняю голосовую команду по DOM.');
+  const result = await send({
+    type: 'voice-command',
+    transcript: spoken,
+    sttProvider: state.activeProvider || 'manual',
+    sttConfidence,
+    speakerTag: speakerTag || document.querySelector('#speakerTag').value || 'auto',
+    autoExecute: true
+  });
+  if (!result.ok) {
+    appendMessage({
+      role: 'assistant',
+      title: 'Команда заблокирована',
+      body: result.error || result.domExecution?.failed?.reason || result.verification?.reason || 'Голосовая команда не выполнена.',
+      tone: 'error',
+      cards: commandDebugCards(result.debug || {}, result.commandResult || {})
+    });
+    setStatus('Голосовая команда заблокирована.');
+    return result;
+  }
+
+  const finalAction = result.actionPlan?.actionTarget || result.commandResult?.actionTarget || result.commandResult?.intent || 'действие';
+  appendMessage({
+    role: 'assistant',
+    title: 'Команда выполнена',
+    body: `Сделано: ${finalAction}.`,
+    cards: [
+      {
+        title: 'Результат',
+        text: result.verification?.reason || result.domExecution?.verification?.reason || 'DOM-действие выполнено',
+        tags: [
+          result.commandResult?.intent || 'voice-command',
+          result.commandResult?.confidence != null ? formatConfidence(result.commandResult.confidence) : 'без confidence'
+        ]
+      },
+      ...commandDebugCards(result.debug || {}, result.commandResult || {})
+    ]
+  });
+  if (result.screenContext) {
+    state.latestScreenContext = result.screenContext;
+  }
+  setStatus('Голосовая команда выполнена.');
+  return result;
+}
+
+async function routeSpokenText(text, { fromRecording = false, sttConfidence = null, speakerTag = null } = {}) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return;
+  if (looksLikeVoiceCommand(normalized)) {
+    return handleVoiceCommand(text, { fromRecording, sttConfidence, speakerTag });
+  }
+  return ingestTranscript(text, { fromRecording });
 }
 
 async function ingestTranscript(textOverride = null, { fromRecording = false } = {}) {
@@ -640,7 +1040,8 @@ async function startBrowserSpeechFallback() {
       const text = entry[0]?.transcript?.trim();
       if (!text) continue;
       chatInputEl.value = text;
-      await ingestTranscript(text, { fromRecording: true });
+      if (!shouldHandleSpokenText(text, { isFinal: true })) continue;
+      await routeSpokenText(text, { fromRecording: true, speakerTag: document.querySelector('#speakerTag').value || 'auto' });
     }
   };
 
@@ -661,19 +1062,153 @@ function extractTranscriptFromRealtimeMessage(payload) {
   return payload.text || payload.transcript || payload.committed_transcript || payload.final_transcript || payload?.transcription?.text || '';
 }
 
+function extractDeepgramTranscript(payload) {
+  return payload?.channel?.alternatives?.[0]?.transcript || '';
+}
+
+function deepgramWordConfidence(payload) {
+  const words = payload?.channel?.alternatives?.[0]?.words || [];
+  const confidences = words.map((word) => Number(word.confidence)).filter((value) => Number.isFinite(value));
+  if (!confidences.length) return null;
+  return Number((confidences.reduce((sum, value) => sum + value, 0) / confidences.length).toFixed(3));
+}
+
+async function startDeepgramRealtime() {
+  const configResult = await send({ type: 'get-deepgram-config' });
+  if (!configResult.ok) throw new Error(configResult.error || 'Deepgram config недоступен.');
+  const config = configResult.config;
+  if (!config?.apiKey || !config?.url) throw new Error('Backend не вернул Deepgram realtime config.');
+  if (config.realtimeUsable === false) {
+    const reason = config.permissionCheck?.reason || 'Deepgram realtime недоступен.';
+    throw new Error(`Deepgram realtime недоступен: ${reason}`);
+  }
+
+  await openMicrophone();
+  const socket = new WebSocket(config.url, ['token', config.apiKey]);
+  state.realtimeSocket = socket;
+  state.activeProvider = 'deepgram-realtime';
+  let lastSocketError = 'Deepgram WebSocket не открылся.';
+
+  socket.onmessage = async (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    const text = extractDeepgramTranscript(payload).trim();
+    const isFinal = Boolean(payload.is_final || payload.speech_final || payload.type === 'UtteranceEnd');
+    if (!text) return;
+    setStatus(`Слышу: ${text}`);
+    if (!shouldHandleSpokenText(text, { isFinal })) return;
+    chatInputEl.value = text;
+    await routeSpokenText(text, {
+      fromRecording: true,
+      sttConfidence: deepgramWordConfidence(payload),
+      speakerTag: document.querySelector('#speakerTag').value || 'auto'
+    });
+  };
+
+  socket.onerror = () => {
+    lastSocketError = 'Deepgram WebSocket не открылся.';
+  };
+
+  await new Promise((resolve, reject) => {
+    socket.onopen = resolve;
+    socket.onclose = (event) => {
+      if (!state.isRecording) return;
+      reject(new Error(`${lastSocketError} close=${event.code}${event.reason ? ` reason=${event.reason}` : ''}`));
+    };
+  });
+
+  await startPcmAudioPump((pcmBytes) => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    socket.send(pcmBytes);
+  });
+  setRecordingUi(true, 'Идет запись через Deepgram realtime.');
+}
+
+async function handleOpenAiPcmChunk(pcmBytes) {
+  if (!state.isRecording || !pcmBytes?.length) return;
+  state.openAiPcmChunks.push(new Uint8Array(pcmBytes));
+  const combinedPcm = concatByteArrays(state.openAiPcmChunks);
+  const unsentBytes = combinedPcm.length - state.lastOpenAiSubmittedBytes;
+  if (state.openAiTranscribeInFlight || combinedPcm.length < 32000 || unsentBytes < 32000) return;
+  state.openAiTranscribeInFlight = true;
+  try {
+    const wavBytes = pcm16ToWavBytes(combinedPcm);
+    const result = await send({
+      type: 'openai-transcribe-audio',
+      audioBase64: toBase64(wavBytes),
+      mimeType: 'audio/wav'
+    });
+    if (!result.ok) throw new Error(result.error || 'OpenAI transcription failed.');
+    state.lastOpenAiError = '';
+    state.lastOpenAiSubmittedBytes = combinedPcm.length;
+    const fullText = String(result.text || '').trim();
+    if (!fullText) return;
+    const previousText = state.lastOpenAiTranscript;
+    const deltaText = previousText && fullText.startsWith(previousText)
+      ? fullText.slice(previousText.length).trim()
+      : fullText;
+    state.lastOpenAiTranscript = fullText;
+    if (!deltaText) {
+      setStatus(`OpenAI услышал: ${fullText}`);
+      return;
+    }
+    chatInputEl.value = fullText;
+    setStatus(`OpenAI услышал: ${deltaText}`);
+    if (shouldHandleSpokenText(deltaText, { isFinal: true })) {
+      try {
+        await routeSpokenText(deltaText, {
+          fromRecording: true,
+          speakerTag: document.querySelector('#speakerTag').value || 'auto'
+        });
+      } catch (error) {
+        showError(error);
+      }
+    }
+  } catch (error) {
+    const message = error.message || 'Не удалось распознать аудио через OpenAI.';
+    if (message !== state.lastOpenAiError) {
+      state.lastOpenAiError = message;
+      appendMessage({
+        role: 'assistant',
+        title: 'OpenAI STT недоступен',
+        body: message,
+        tone: 'error'
+      });
+    }
+  } finally {
+    state.openAiTranscribeInFlight = false;
+  }
+}
+
+async function startOpenAiChunkedTranscription() {
+  const configResult = await send({ type: 'get-openai-stt-config' });
+  if (!configResult.ok || !configResult.config?.apiKeyConfigured) {
+    throw new Error('OPENAI_API_KEY не настроен на локальном backend.');
+  }
+  await openMicrophone();
+  state.openAiAudioChunks = [];
+  state.openAiPcmChunks = [];
+  state.lastOpenAiSubmittedBytes = 0;
+  state.lastOpenAiTranscript = '';
+  state.lastOpenAiError = '';
+  state.activeProvider = 'openai-transcribe';
+  await startPcmAudioPump((pcmChunk) => {
+    handleOpenAiPcmChunk(pcmChunk).catch((error) => showError(error));
+  });
+  setRecordingUi(true, `Идет запись через OpenAI ${configResult.config.model || 'transcribe'}.`);
+}
+
 async function startElevenLabsRealtime() {
   const tokenResult = await send({ type: 'get-realtime-token' });
   if (!tokenResult.ok) throw new Error(tokenResult.error || 'Realtime token недоступен.');
   const token = tokenValue(tokenResult.token);
   if (!token) throw new Error('Backend не вернул одноразовый realtime token.');
 
-  state.mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    }
-  });
+  await openMicrophone();
 
   const model = tokenResult.token?.model || 'scribe_v2_realtime';
   const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=${encodeURIComponent(model)}&language_code=ru&audio_format=pcm_16000&commit_strategy=vad&token=${encodeURIComponent(token)}`;
@@ -692,7 +1227,11 @@ async function startElevenLabsRealtime() {
     const isFinal = payload.is_final || payload.final || /committed|final/i.test(payload.message_type || payload.type || '');
     if (!text) return;
     chatInputEl.value = text;
-    if (isFinal) await ingestTranscript(text, { fromRecording: true });
+    if (!shouldHandleSpokenText(text, { isFinal })) return;
+    await routeSpokenText(text, {
+      fromRecording: true,
+      speakerTag: document.querySelector('#speakerTag').value || 'auto'
+    });
   };
 
   socket.onerror = async () => {
@@ -714,22 +1253,14 @@ async function startElevenLabsRealtime() {
     };
   });
 
-  state.audioContext = new AudioContext();
-  state.sourceNode = state.audioContext.createMediaStreamSource(state.mediaStream);
-  state.processorNode = state.audioContext.createScriptProcessor(4096, 1, 1);
-  state.processorNode.onaudioprocess = (event) => {
+  await startPcmAudioPump((pcmBytes) => {
     if (!state.isRecording || socket.readyState !== WebSocket.OPEN) return;
-    const input = event.inputBuffer.getChannelData(0);
-    const downsampled = downsampleTo16Khz(input, state.audioContext.sampleRate);
-    const pcmBytes = floatToPcm16(downsampled);
     socket.send(JSON.stringify({
       message_type: 'input_audio_chunk',
       audio_base_64: toBase64(pcmBytes),
       sample_rate: 16000
     }));
-  };
-  state.sourceNode.connect(state.processorNode);
-  state.processorNode.connect(state.audioContext.destination);
+  });
   setRecordingUi(true, 'Идет запись через realtime STT.');
 }
 
@@ -741,12 +1272,23 @@ async function startRecording() {
     state.currentSession = result.session;
     state.latestScreenContext = result.screenContext;
     appendMessage({ role: 'assistant', title: 'Запись началась', body: 'Говорите свободно. Я покажу врачу только понятные итоги и предложения.' });
+    const openAiConfig = await send({ type: 'get-openai-stt-config' }).catch(() => ({ ok: false }));
+    if (openAiConfig.ok && openAiConfig.config?.apiKeyConfigured && openAiConfig.config?.preferred) {
+      await startOpenAiChunkedTranscription();
+      return;
+    }
     try {
-      await startElevenLabsRealtime();
+      await startDeepgramRealtime();
     } catch (error) {
-      appendMessage({ role: 'assistant', title: 'Использую резервную запись', body: error.message });
+      appendMessage({ role: 'assistant', title: 'Переключаю запись', body: `${error.message} Перехожу на резервный режим.` });
       await stopRealtimeAudioOnly();
-      await startBrowserSpeechFallback();
+      await startOpenAiChunkedTranscription().catch(async () => {
+        await stopRealtimeAudioOnly();
+        await startElevenLabsRealtime().catch(async () => {
+          await stopRealtimeAudioOnly();
+          await startBrowserSpeechFallback();
+        });
+      });
     }
   } catch (error) {
     setRecordingUi(false, 'Запись не запущена.');
@@ -755,9 +1297,23 @@ async function startRecording() {
 }
 
 async function stopRealtimeAudioOnly() {
+  if (state.mediaRecorder) {
+    const recorder = state.mediaRecorder;
+    state.mediaRecorder = null;
+    if (recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+  }
+  state.openAiTranscribeInFlight = false;
+  state.openAiAudioChunks = [];
+  state.openAiPcmChunks = [];
+  state.lastOpenAiSubmittedBytes = 0;
+  state.lastOpenAiTranscript = '';
+  state.lastOpenAiError = '';
   if (state.processorNode) {
     state.processorNode.disconnect();
-    state.processorNode.onaudioprocess = null;
+    if (state.processorNode.port) state.processorNode.port.onmessage = null;
+    if ('onaudioprocess' in state.processorNode) state.processorNode.onaudioprocess = null;
     state.processorNode = null;
   }
   if (state.sourceNode) {
@@ -774,7 +1330,11 @@ async function stopRealtimeAudioOnly() {
   }
   if (state.realtimeSocket) {
     if (state.realtimeSocket.readyState === WebSocket.OPEN) {
-      state.realtimeSocket.send(JSON.stringify({ message_type: 'commit' }));
+      if (state.activeProvider === 'deepgram-realtime') {
+        state.realtimeSocket.send(JSON.stringify({ type: 'CloseStream' }));
+      } else {
+        state.realtimeSocket.send(JSON.stringify({ message_type: 'commit' }));
+      }
     }
     state.realtimeSocket.close();
     state.realtimeSocket = null;
@@ -814,19 +1374,24 @@ async function toggleRecording() {
 }
 
 async function handleSubmit(event) {
-  event.preventDefault();
-  const text = chatInputEl.value.trim();
-  if (!text) return;
-  if (isBreakModeCommand(text)) {
-    await openBreakMode('chat-command');
-    return;
-  }
-  if (state.advisorModeEnabled) {
+  try {
+    event.preventDefault();
+    const text = chatInputEl.value.trim();
+    if (!text) return;
+    if (isBreakModeCommand(text)) {
+      await openBreakMode('chat-command');
+      return;
+    }
+    if (state.advisorModeEnabled) {
+      chatInputEl.value = '';
+      await askAdvisor(text);
+      return;
+    }
+    await routeSpokenText(text, { fromRecording: false, speakerTag: document.querySelector('#speakerTag').value || 'auto' });
     chatInputEl.value = '';
-    await askAdvisor(text);
-    return;
+  } catch (error) {
+    showError(error);
   }
-  await ingestTranscript(text);
 }
 
 function initEvents() {
@@ -884,10 +1449,12 @@ function init() {
   setTheme(localStorage.getItem('damumed-assistant-theme') || 'light');
   updateAdvisorUi();
   initEvents();
+  document.body.dataset.buildId = EXTENSION_BUILD_ID;
   appendMessage({
     role: 'assistant',
     title: 'Готов к приему',
-    body: 'Я буду показывать только понятные подсказки: что услышал, что можно заполнить и какой следующий шаг проверить врачу.'
+    body: 'Я буду показывать только понятные подсказки: что услышал, что можно заполнить и какой следующий шаг проверить врачу.',
+    cards: [{ title: 'Версия расширения', text: EXTENSION_BUILD_ID }]
   });
   refreshContext({ silent: true }).catch(showError);
 }
