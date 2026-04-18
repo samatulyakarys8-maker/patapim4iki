@@ -17,134 +17,188 @@
         <button id="themeToggle" class="icon-button" type="button" aria-label="Переключить тему">Темная</button>
       </header>
 
-      <section id="workspaceDeck" class="workspace-deck" aria-label="Рабочий набор пациента">
-        <div class="workspace-header">
-          <div>
-            <p class="workspace-kicker">Контекст приема</p>
-            <h2 class="workspace-title">Рабочий набор пациента</h2>
-            <p id="workspaceSubtitle" class="workspace-subtitle">Откройте карточку приема, чтобы загрузить документы и использовать профильные пресеты.</p>
-          </div>
-          <div class="workspace-actions">
-            <button id="refreshWorkspace" class="ghost-button" type="button">Обновить</button>
-            <label class="primary-button upload-button" for="assetUploadInput">Загрузить файл</label>
-            <input id="assetUploadInput" type="file" hidden multiple accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp" />
-          </div>
-        </div>
+      <nav class="view-tabs" aria-label="Разделы расширения">
+        <button class="view-tab is-active" type="button" data-view="chat">Чат</button>
+        <button class="view-tab" type="button" data-view="whatsapp">WhatsApp</button>
+      </nav>
 
-        <div id="workspaceContext" class="workspace-context">
-          <div class="workspace-chip">
-            <span class="workspace-chip-label">Пациент</span>
-            <strong id="workspacePatient">Не выбран</strong>
-          </div>
-          <div class="workspace-chip">
-            <span class="workspace-chip-label">Экран</span>
-            <strong id="workspaceScreen">Нет активной формы</strong>
-          </div>
-          <div class="workspace-chip">
-            <span class="workspace-chip-label">Источник</span>
-            <strong id="workspaceSource">DOM + runtime</strong>
-          </div>
-        </div>
-
-        <div class="workspace-grid">
-          <section class="workspace-card" aria-labelledby="assetListTitle">
-            <div class="workspace-card-head">
-              <h3 id="assetListTitle">Документы и выписки</h3>
-              <span id="assetCount" class="workspace-counter">0</span>
+      <section id="chatView" class="chat-shell main-view">
+        <section id="workspaceDeck" class="workspace-deck" aria-label="Рабочий набор пациента">
+          <div class="workspace-header">
+            <div>
+              <p class="workspace-kicker">Контекст приема</p>
+              <h2 class="workspace-title">Рабочий набор пациента</h2>
+              <p id="workspaceSubtitle" class="workspace-subtitle">Откройте карточку приема, чтобы загрузить документы и использовать профильные пресеты.</p>
             </div>
-            <div id="assetList" class="workspace-list">
-              <p class="workspace-empty">Файлы еще не загружены.</p>
+            <div class="workspace-actions">
+              <button id="refreshWorkspace" class="ghost-button" type="button">Обновить</button>
+              <label class="primary-button upload-button" for="assetUploadInput">Загрузить файл</label>
+              <input id="assetUploadInput" type="file" hidden multiple accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp" />
             </div>
-          </section>
-
-          <section class="workspace-card" aria-labelledby="presetListTitle">
-            <div class="workspace-card-head">
-              <h3 id="presetListTitle">Пресеты по контексту</h3>
-              <span id="presetCount" class="workspace-counter">0</span>
-            </div>
-            <div id="presetList" class="workspace-list">
-              <p class="workspace-empty">Пресеты появятся после открытия приема и загрузки документов.</p>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <section id="chatTimeline" class="chat-timeline" aria-live="polite"></section>
-      <section id="breakModePanel" class="break-mode-panel" hidden>
-        <div class="break-mode-topline">
-          <div>
-            <p class="break-mode-title">Break Mode</p>
-            <p id="breakModeStatus" class="break-mode-copy">Нажмите для старта</p>
           </div>
-          <div class="break-mode-scoreboard">
-            <span class="break-pill">Очки <strong id="breakModeScore">0</strong></span>
-            <span class="break-pill">Рекорд <strong id="breakModeBest">0</strong></span>
+
+          <div id="workspaceContext" class="workspace-context">
+            <div class="workspace-chip">
+              <span class="workspace-chip-label">Пациент</span>
+              <strong id="workspacePatient">Не выбран</strong>
+            </div>
+            <div class="workspace-chip">
+              <span class="workspace-chip-label">Экран</span>
+              <strong id="workspaceScreen">Нет активной формы</strong>
+            </div>
+            <div class="workspace-chip">
+              <span class="workspace-chip-label">Источник</span>
+              <strong id="workspaceSource">DOM + runtime</strong>
+            </div>
           </div>
-        </div>
-        <div class="break-mode-actions">
-          <button id="breakModeClose" class="ghost-button" type="button">Закрыть</button>
-          <button id="breakModeRestart" class="ghost-button" type="button" hidden>Еще раз</button>
-        </div>
-        <canvas id="breakModeCanvas" class="break-mode-canvas" width="280" height="420" aria-label="Break Mode mini game"></canvas>
-      </section>
 
-      <section class="quick-actions" aria-label="Действия формы">
-        <button id="applyPreview" class="primary-button" type="button">Применить в форму</button>
-        <button id="saveInspection" class="ghost-button" type="button">Сохранить</button>
-        <button id="saveCloseInspection" class="ghost-button" type="button">Сохранить и закрыть</button>
-      </section>
-
-      <form id="composer" class="composer">
-        <textarea id="chatInput" placeholder="Вставьте текст приема или задайте вопрос советчику."></textarea>
-
-        <div class="composer-toolbar">
-          <div class="left-tools">
-            <div class="tools-wrap">
-              <button id="toolsToggle" class="control-button plus-button" type="button" aria-label="Открыть меню" aria-expanded="false">+</button>
-              <div id="toolsMenu" class="tools-menu" hidden>
-                <button id="toggleAdvisorMode" class="menu-item" type="button">Включить режим советчика</button>
-                <button id="clearChat" class="menu-item danger" type="button">Очистить чат</button>
-                <label class="menu-label" for="speakerTag">Кто говорит</label>
-                <select id="speakerTag" class="menu-select" aria-label="Кто говорит">
-                  <option value="auto">Определить автоматически</option>
-                  <option value="doctor">Врач</option>
-                  <option value="caregiver">Родитель</option>
-                  <option value="patient">Пациент</option>
-                  <option value="unknown">Неизвестно</option>
-                </select>
-                <button id="refreshContext" class="menu-item" type="button">Обновить контекст</button>
-                <button id="loadDraft" class="menu-item" type="button">Показать предложения</button>
-                <button id="exampleDoctor" class="menu-item" type="button">Пример врача</button>
-                <button id="exampleCaregiver" class="menu-item" type="button">Пример родителя</button>
-                <button id="breakModeTrigger" class="menu-item secret-break-trigger" type="button" title="Break Mode">Перерыв</button>
+          <div class="workspace-grid">
+            <section class="workspace-card" aria-labelledby="assetListTitle">
+              <div class="workspace-card-head">
+                <h3 id="assetListTitle">Документы и выписки</h3>
+                <span id="assetCount" class="workspace-counter">0</span>
               </div>
+              <div id="assetList" class="workspace-list">
+                <p class="workspace-empty">Файлы еще не загружены.</p>
+              </div>
+            </section>
+
+            <section class="workspace-card" aria-labelledby="presetListTitle">
+              <div class="workspace-card-head">
+                <h3 id="presetListTitle">Пресеты по контексту</h3>
+                <span id="presetCount" class="workspace-counter">0</span>
+              </div>
+              <div id="presetList" class="workspace-list">
+                <p class="workspace-empty">Пресеты появятся после открытия приема и загрузки документов.</p>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="chatTimeline" class="chat-timeline" aria-live="polite"></section>
+
+        <section id="breakModePanel" class="break-mode-panel" hidden>
+          <div class="break-mode-topline">
+            <div>
+              <p class="break-mode-title">Break Mode</p>
+              <p id="breakModeStatus" class="break-mode-copy">Нажмите для старта</p>
+            </div>
+            <div class="break-mode-scoreboard">
+              <span class="break-pill">Очки <strong id="breakModeScore">0</strong></span>
+              <span class="break-pill">Рекорд <strong id="breakModeBest">0</strong></span>
+            </div>
+          </div>
+          <div class="break-mode-actions">
+            <button id="breakModeClose" class="ghost-button" type="button">Закрыть</button>
+            <button id="breakModeRestart" class="ghost-button" type="button" hidden>Еще раз</button>
+          </div>
+          <canvas id="breakModeCanvas" class="break-mode-canvas" width="280" height="420" aria-label="Break Mode mini game"></canvas>
+        </section>
+
+        <section class="quick-actions" aria-label="Действия формы">
+          <button id="applyPreview" class="primary-button" type="button">Применить в форму</button>
+          <button id="saveInspection" class="ghost-button" type="button">Сохранить</button>
+          <button id="saveCloseInspection" class="ghost-button" type="button">Сохранить и закрыть</button>
+        </section>
+
+        <form id="composer" class="composer">
+          <textarea id="chatInput" placeholder="Вставьте текст приема или задайте вопрос советчику."></textarea>
+
+          <div class="composer-toolbar">
+            <div class="left-tools">
+              <div class="tools-wrap">
+                <button id="toolsToggle" class="control-button plus-button" type="button" aria-label="Открыть меню" aria-expanded="false">+</button>
+                <div id="toolsMenu" class="tools-menu" hidden>
+                  <button id="toggleAdvisorMode" class="menu-item" type="button">Включить режим советчика</button>
+                  <button id="clearChat" class="menu-item danger" type="button">Очистить чат</button>
+                  <label class="menu-label" for="speakerTag">Кто говорит</label>
+                  <select id="speakerTag" class="menu-select" aria-label="Кто говорит">
+                    <option value="auto">Определить автоматически</option>
+                    <option value="doctor">Врач</option>
+                    <option value="caregiver">Родитель</option>
+                    <option value="patient">Пациент</option>
+                    <option value="unknown">Неизвестно</option>
+                  </select>
+                  <button id="refreshContext" class="menu-item" type="button">Обновить контекст</button>
+                  <button id="loadDraft" class="menu-item" type="button">Показать предложения</button>
+                  <button id="exampleDoctor" class="menu-item" type="button">Пример врача</button>
+                  <button id="exampleCaregiver" class="menu-item" type="button">Пример родителя</button>
+                  <button id="breakModeTrigger" class="menu-item secret-break-trigger" type="button" title="Break Mode">Перерыв</button>
+                </div>
+              </div>
+
+              <button id="advisorModePill" class="mode-pill" type="button" aria-pressed="false">
+                <span id="advisorIndicator" class="status-dot" hidden></span>
+                Режим советчика
+                <span class="chevron">⌄</span>
+              </button>
             </div>
 
-            <button id="advisorModePill" class="mode-pill" type="button" aria-pressed="false">
-              <span id="advisorIndicator" class="status-dot" hidden></span>
-              Режим советчика
-              <span class="chevron">⌄</span>
-            </button>
+            <div class="right-tools">
+              <button id="voiceToggle" class="icon-control" type="button" aria-label="Запустить запись" title="Запись">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path>
+                  <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
+                  <path d="M12 18v3"></path>
+                  <path d="M8 21h8"></path>
+                </svg>
+              </button>
+              <button id="sendMessage" class="send-button" type="submit" aria-label="Отправить">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 19V5"></path>
+                  <path d="m5 12 7-7 7 7"></path>
+                </svg>
+              </button>
+            </div>
           </div>
+        </form>
+      </section>
 
-          <div class="right-tools">
-            <button id="voiceToggle" class="icon-control" type="button" aria-label="Запустить запись" title="Запись">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path>
-                <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
-                <path d="M12 18v3"></path>
-                <path d="M8 21h8"></path>
-              </svg>
-            </button>
-            <button id="sendMessage" class="send-button" type="submit" aria-label="Отправить">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 19V5"></path>
-                <path d="m5 12 7-7 7 7"></path>
-              </svg>
-            </button>
+      <section id="whatsappView" class="whatsapp-view main-view" hidden>
+        <div class="whatsapp-panel">
+          <div>
+            <p class="eyebrow">WhatsApp intake</p>
+            <h2>QR врача</h2>
+            <p class="subtitle">Пациент сканирует QR дома, проходит анкету в WhatsApp, врач видит только свои обращения.</p>
+          </div>
+          <label class="field-label" for="whatsappDoctorSelect">Врач</label>
+          <select id="whatsappDoctorSelect" class="field-control"></select>
+          <div id="whatsappQrBox" class="qr-box"></div>
+          <a id="whatsappDoctorLink" class="wa-link" href="#" target="_blank" rel="noreferrer">Открыть WhatsApp ссылку</a>
+          <button id="refreshWhatsappQr" class="ghost-button" type="button">Обновить QR</button>
+
+          <div class="testing-card">
+            <p class="eyebrow">Testing mode</p>
+            <p class="subtitle">Для тестового номера Meta бот отвечает только номерам, добавленным в API Setup → To. Добавьте номер пациента, нажмите Send message в Meta или отправьте приглашение отсюда, затем пациент должен ответить doctor-token.</p>
+            <label class="field-label" for="whatsappDoctorToken">Doctor-token</label>
+            <div class="token-row">
+              <code id="whatsappDoctorToken" class="token-chip">...</code>
+              <button id="copyWhatsappToken" class="ghost-button" type="button">Скопировать token</button>
+            </div>
+            <label class="field-label" for="whatsappQuestionnaireText">Сообщение-анкета одним ответом</label>
+            <textarea id="whatsappQuestionnaireText" class="questionnaire-textarea" readonly></textarea>
+            <button id="copyWhatsappQuestionnaire" class="ghost-button" type="button">Скопировать анкету</button>
+            <label class="field-label" for="whatsappTestPhone">Тестовый номер пациента</label>
+            <div class="search-row">
+              <input id="whatsappTestPhone" class="field-control" type="tel" placeholder="Например 13124683054" />
+              <button id="sendWhatsappInvite" class="ghost-button" type="button">Отправить приглашение</button>
+            </div>
+            <p id="whatsappTestStatus" class="helper-text">Если Meta не пропускает сообщение, скопируйте token и отправьте его пациенту вручную.</p>
           </div>
         </div>
-      </form>
+
+        <div class="whatsapp-panel">
+          <div class="search-row">
+            <input id="whatsappSearch" class="field-control" type="search" placeholder="Поиск по ФИО, ИИН или телефону" />
+            <button id="refreshWhatsappIntakes" class="ghost-button" type="button">Обновить</button>
+          </div>
+          <div id="whatsappIntakeList" class="intake-list"></div>
+        </div>
+
+        <div id="whatsappIntakeDetail" class="whatsapp-panel intake-detail">
+          <p class="subtitle">Выберите обращение, чтобы увидеть анализ и вложения.</p>
+        </div>
+      </section>
     </main>
     <script type="module" src="sidepanel.js"></script>
   </body>

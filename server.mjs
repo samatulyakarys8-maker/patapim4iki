@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import QRCode from 'qrcode';
 import { buildArtifacts, buildReadonlyTabs, seedRuntimeState, writeArtifacts } from './lib/dataset.mjs';
 import {
   applyInspectionSave,
@@ -29,6 +30,8 @@ import {
 import { AdvisorContextError, analyzeAdvisor } from './lib/advisor.mjs';
 import { getOpenAiSttConfig, transcribeOpenAiAudio } from './lib/openai-stt.mjs';
 import { buildPatientPresets, getPatientAssets, registerPatientAsset } from './lib/patient-assets.mjs';
+import { createIntakeStore } from './lib/intake-db.mjs';
+import { handleWhatsAppWebhook, sendWhatsAppMessage, sendWhatsAppTemplate, verifyWhatsAppWebhook } from './lib/whatsapp-cloud.mjs';
 import { buildPsychologistsFromRuntime, generatePsychologistSchedule } from './lib/scheduler.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +41,9 @@ const APP_DIR = path.join(__dirname, 'app');
 const EXTENSION_DIR = path.join(__dirname, 'extension');
 const GENERATED_DIR = path.join(__dirname, 'data/generated');
 const RUNTIME_PATH = path.join(__dirname, 'data/runtime/state.json');
+const INTAKE_DB_PATH = path.join(__dirname, 'data/intake/intakes.sqlite');
+const INTAKE_UPLOAD_DIR = path.join(__dirname, 'data/intake/uploads');
+const WHATSAPP_WEBHOOK_LOG_PATH = path.join(__dirname, 'data/intake/webhook-events.log');
 
 function loadLocalEnv() {
   for (const envFile of ['.env.local', '.env']) {
@@ -142,6 +148,12 @@ async function loadPersistedRuntime() {
 await loadPersistedRuntime();
 await fsp.writeFile(path.join(GENERATED_DIR, 'voice_lexicon.json'), JSON.stringify(runtime.voiceLexicon, null, 2), 'utf8');
 await persistRuntime();
+const intakeStore = createIntakeStore({
+  dbPath: INTAKE_DB_PATH,
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+  whatsappBusinessNumber: process.env.WHATSAPP_BUSINESS_NUMBER || ''
+});
+intakeStore.upsertDoctors(runtime.providers);
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -163,8 +175,74 @@ function sendText(res, statusCode, payload, contentType = 'text/plain; charset=u
   res.end(payload);
 }
 
+async function appendWhatsAppWebhookLog(event) {
+  await fsp.mkdir(path.dirname(WHATSAPP_WEBHOOK_LOG_PATH), { recursive: true });
+  await fsp.appendFile(WHATSAPP_WEBHOOK_LOG_PATH, `${JSON.stringify({
+    at: new Date().toISOString(),
+    ...event
+  })}\n`, 'utf8');
+}
+
 function notFound(res) {
   sendJson(res, 404, { error: 'Not found' });
+}
+
+async function doctorWithQr(doctor) {
+  if (!doctor) return null;
+  return {
+    ...doctor,
+    qr_data_url: await QRCode.toDataURL(doctor.whatsapp_url, {
+      margin: 1,
+      width: 256,
+      color: { dark: '#0f172a', light: '#ffffff' }
+    })
+  };
+}
+
+function normalizeWhatsAppRecipient(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (/^8\d{10}$/.test(digits)) {
+    return `7${digits.slice(1)}`;
+  }
+  return digits;
+}
+
+function buildWhatsAppQuestionnaireMessage(doctor) {
+  return [
+    doctor.qr_token,
+    '',
+    'Анкета для врача. Ответьте одним сообщением, заполните строки после двоеточия:',
+    'ФИО пациента: ',
+    'ИИН: ',
+    'Телефон: ',
+    'Жалоба / что беспокоит: ',
+    'Когда началось: ',
+    'Где сильнее проявляется: ',
+    'Речь, внимание, обучение, игра: ',
+    'Сон, аппетит, тревожность, истерики: ',
+    'Что помогает: ',
+    'Красные флаги: судороги, резкое ухудшение, самоповреждение, опасное поведение? ',
+    'Фото/документы: можно отправить отдельным сообщением после этой анкеты.'
+  ].join('\n');
+}
+
+function whatsappInviteTemplateConfig(doctor) {
+  const name = process.env.WHATSAPP_INVITE_TEMPLATE_NAME || 'hello_world';
+  const language = process.env.WHATSAPP_INVITE_TEMPLATE_LANGUAGE || 'en_US';
+  const tokenParamEnabled = /^(1|true|yes)$/i.test(process.env.WHATSAPP_INVITE_TEMPLATE_TOKEN_PARAM || '');
+  const questionnaireParamEnabled = /^(1|true|yes)$/i.test(process.env.WHATSAPP_INVITE_TEMPLATE_QUESTIONNAIRE_PARAM || '');
+  const parameters = [];
+  if (tokenParamEnabled) {
+    parameters.push({ type: 'text', text: doctor.qr_token });
+  }
+  if (questionnaireParamEnabled) {
+    parameters.push({ type: 'text', text: buildWhatsAppQuestionnaireMessage(doctor) });
+  }
+  return {
+    name,
+    language,
+    components: parameters.length ? [{ type: 'body', parameters }] : []
+  };
 }
 
 function contentTypeFor(filePath) {
@@ -571,6 +649,165 @@ function applyGeneratedScheduleToRuntime(generated, patientId) {
 }
 
 async function handleApi(req, res, url) {
+  if (req.method === 'GET' && url.pathname === '/api/whatsapp/webhook') {
+    const verification = verifyWhatsAppWebhook(url.searchParams);
+    await appendWhatsAppWebhookLog({
+      method: 'GET',
+      mode: url.searchParams.get('hub.mode') || '',
+      ok: verification.ok
+    });
+    if (!verification.ok) {
+      return sendJson(res, 403, { ok: false, error: 'Invalid WhatsApp verify token.' });
+    }
+    return sendText(res, 200, verification.challenge);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/whatsapp/webhook') {
+    const body = await readBody(req);
+    const changes = (body?.entry || []).flatMap((entry) => entry?.changes || []);
+    await appendWhatsAppWebhookLog({
+      method: 'POST',
+      object: body?.object || '',
+      entries: Array.isArray(body?.entry) ? body.entry.length : 0,
+      messageCount: changes.reduce((count, change) => count + (change?.value?.messages?.length || 0), 0),
+      statusCount: changes.reduce((count, change) => count + (change?.value?.statuses?.length || 0), 0)
+    });
+    const result = await handleWhatsAppWebhook({
+      store: intakeStore,
+      body,
+      uploadRoot: INTAKE_UPLOAD_DIR
+    });
+    return sendJson(res, 200, result);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/whatsapp/start') {
+    const token = url.searchParams.get('token') || '';
+    const doctor = intakeStore.getDoctorByToken(token);
+    return sendJson(res, doctor ? 200 : 404, {
+      ok: Boolean(doctor),
+      doctor,
+      message: doctor
+        ? 'Open this link on a phone with WhatsApp and send the prepared doctor token.'
+        : 'Doctor QR token was not found.'
+    });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/whatsapp/doctors') {
+    const doctors = await Promise.all(intakeStore.listDoctors().map(doctorWithQr));
+    return sendJson(res, 200, { ok: true, doctors });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/whatsapp/test-invite') {
+    const body = await readBody(req);
+    const doctor = intakeStore.getDoctor(body.doctorId);
+    const to = normalizeWhatsAppRecipient(body.to);
+    if (!doctor) return sendJson(res, 404, { ok: false, error: 'Doctor was not found.' });
+    if (to.length < 8) return sendJson(res, 400, { ok: false, error: 'Valid WhatsApp recipient number is required.' });
+
+    let templateResult = null;
+    let instructionResult = null;
+    let instructionError = null;
+    const templateConfig = whatsappInviteTemplateConfig(doctor);
+    const questionnaire = buildWhatsAppQuestionnaireMessage(doctor);
+    try {
+      templateResult = await sendWhatsAppTemplate(
+        to,
+        templateConfig.name,
+        templateConfig.language,
+        templateConfig.components
+      );
+    } catch (error) {
+      return sendJson(res, 400, {
+        ok: false,
+        error: `Meta did not send the ${templateConfig.name} template. Check the access token, template name, language, and API Setup -> To recipient.`,
+        details: error.message,
+        manualToken: doctor.qr_token,
+        questionnaire
+      });
+    }
+
+    const instructionText = [
+      'Damumed Assistant: тестовая анкета WhatsApp.',
+      `Ответьте одним сообщением по анкете для врача ${doctor.display_name}:`,
+      questionnaire
+    ].join('\n');
+    try {
+      instructionResult = await sendWhatsAppMessage(to, instructionText);
+    } catch (error) {
+      instructionError = error.message;
+    }
+
+    return sendJson(res, 200, {
+      ok: true,
+      to,
+      doctor,
+      template: templateResult,
+      templateName: templateConfig.name,
+      instruction: instructionResult,
+      instructionError,
+      manualToken: doctor.qr_token,
+      questionnaire
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/whatsapp\/doctors\/[^/]+\/qr$/.test(url.pathname)) {
+    const doctorId = decodeURIComponent(url.pathname.split('/')[4]);
+    const doctor = await doctorWithQr(intakeStore.ensureDoctorQr(doctorId));
+    if (!doctor) return notFound(res);
+    return sendJson(res, 200, { ok: true, doctor });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/whatsapp/intakes') {
+    const doctorId = url.searchParams.get('doctorId') || '';
+    if (!doctorId) return sendJson(res, 400, { ok: false, error: 'doctorId is required.' });
+    const intakes = intakeStore.listIntakes({
+      doctorId,
+      query: url.searchParams.get('query') || '',
+      status: url.searchParams.get('status') || ''
+    });
+    return sendJson(res, 200, { ok: true, intakes });
+  }
+
+  if (req.method === 'GET' && /^\/api\/whatsapp\/intakes\/[^/]+$/.test(url.pathname)) {
+    const intakeId = decodeURIComponent(url.pathname.split('/')[4]);
+    const doctorId = url.searchParams.get('doctorId') || '';
+    if (!doctorId) return sendJson(res, 400, { ok: false, error: 'doctorId is required.' });
+    const intake = intakeStore.getIntakeForDoctor(intakeId, doctorId);
+    if (!intake) return notFound(res);
+    return sendJson(res, 200, { ok: true, intake });
+  }
+
+  if (req.method === 'POST' && /^\/api\/whatsapp\/intakes\/[^/]+\/import$/.test(url.pathname)) {
+    const intakeId = decodeURIComponent(url.pathname.split('/')[4]);
+    const body = await readBody(req);
+    const intake = intakeStore.getIntakeForDoctor(intakeId, body.doctorId);
+    if (!intake) return notFound(res);
+    intakeStore.updateIntake(intakeId, { status: 'imported' });
+    return sendJson(res, 200, {
+      ok: true,
+      intake: intakeStore.getIntake(intakeId),
+      message: {
+        title: 'WhatsApp intake',
+        body: [
+          intake.patient_fio ? `Пациент: ${intake.patient_fio}` : '',
+          intake.iin ? `ИИН: ${intake.iin}` : '',
+          intake.phone ? `Телефон: ${intake.phone}` : '',
+          intake.main_complaint ? `Жалоба: ${intake.main_complaint}` : '',
+          intake.analysis_text || ''
+        ].filter(Boolean).join('\n')
+      }
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/whatsapp\/intakes\/[^/]+\/status$/.test(url.pathname)) {
+    const intakeId = decodeURIComponent(url.pathname.split('/')[4]);
+    const body = await readBody(req);
+    const intake = intakeStore.getIntakeForDoctor(intakeId, body.doctorId);
+    if (!intake) return notFound(res);
+    const status = ['new', 'reviewed', 'imported', 'collecting'].includes(body.status) ? body.status : 'reviewed';
+    return sendJson(res, 200, { ok: true, intake: intakeStore.updateIntake(intakeId, { status }) });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
     const schedulePayload = serializeSchedulePayload(runtime.currentDate, 'all');
     return sendJson(res, 200, {

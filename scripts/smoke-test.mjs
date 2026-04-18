@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { buildArtifacts, seedRuntimeState } from '../lib/dataset.mjs';
 import { AdvisorContextError, analyzeAdvisor } from '../lib/advisor.mjs';
 import { getOpenAiSttConfig, normalizeOpenAiAudioMimeType } from '../lib/openai-stt.mjs';
 import { normalizeTranscript as normalizeCanonicalTranscript } from '../lib/transcript-normalizer.mjs';
+import { createIntakeStore } from '../lib/intake-db.mjs';
+import { handleWhatsAppWebhook, verifyWhatsAppWebhook } from '../lib/whatsapp-cloud.mjs';
 import {
   buildProcedureSchedulePreview,
   getDeepgramRealtimeConfig,
@@ -249,6 +254,164 @@ await assert.rejects(
   }),
   (error) => error instanceof AdvisorContextError && error.code === 'advisor_context_missing'
 );
+assert.equal(advisorAnswerText.includes('screen_id'), false);
+
+const intakeTempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'damumed-intake-'));
+const intakeStore = createIntakeStore({
+  dbPath: path.join(intakeTempDir, 'intakes.sqlite'),
+  publicBaseUrl: 'http://localhost:3030',
+  whatsappBusinessNumber: '77001234567'
+});
+intakeStore.upsertDoctors(runtime.providers.slice(0, 2));
+const intakeDoctors = intakeStore.listDoctors();
+assert.ok(intakeDoctors.length >= 2);
+assert.ok(intakeDoctors[0].qr_token);
+assert.ok(intakeDoctors[0].whatsapp_url.includes('wa.me'));
+
+const challenge = verifyWhatsAppWebhook(new URLSearchParams({
+  'hub.mode': 'subscribe',
+  'hub.verify_token': 'damumed-local-whatsapp',
+  'hub.challenge': '12345'
+}));
+assert.equal(challenge.ok, true);
+assert.equal(challenge.challenge, '12345');
+
+const doctorToken = intakeDoctors[0].qr_token;
+const uploadRoot = path.join(intakeTempDir, 'uploads');
+await handleWhatsAppWebhook({
+  store: intakeStore,
+  uploadRoot,
+  body: {
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: '770700000001', profile: { name: 'Parent One' } }],
+          messages: [{ from: '770700000001', text: { body: doctorToken } }]
+        }
+      }]
+    }]
+  }
+});
+
+await handleWhatsAppWebhook({
+  store: intakeStore,
+  uploadRoot,
+  body: {
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: '770700000001', profile: { name: 'Parent One' } }],
+          messages: [
+            { from: '770700000001', text: { body: 'Иванов Иван Иванович' } },
+            { from: '770700000001', text: { body: '123456789012' } },
+            { from: '770700000001', text: { body: '+770700000001' } },
+            { from: '770700000001', text: { body: 'Ребенок быстро устает и плохо удерживает внимание.' } },
+            { from: '770700000001', text: { body: 'Около трех месяцев назад это стало заметнее.' } },
+            { from: '770700000001', text: { body: 'Сильнее всего дома и на занятиях.' } },
+            { from: '770700000001', text: { body: 'Есть трудности с речью и пониманием инструкции.' } },
+            { from: '770700000001', text: { body: 'Сон тревожный, бывают истерики.' } },
+            { from: '770700000001', text: { body: 'Помогают короткие задания и перерывы.' } },
+            { from: '770700000001', text: { body: 'Судорог и потери сознания не было.' } }
+          ]
+        }
+      }]
+    }]
+  }
+});
+
+await handleWhatsAppWebhook({
+  store: intakeStore,
+  uploadRoot,
+  body: {
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: '770700000001', profile: { name: 'Parent One' } }],
+          messages: [{
+            from: '770700000001',
+            image: { id: 'mock-image-1', mime_type: 'image/jpeg', caption: 'Фото рисунка ребенка' }
+          }]
+        }
+      }]
+    }]
+  }
+});
+
+let collectingIntake = intakeStore.listIntakes({ doctorId: intakeDoctors[0].doctor_id })[0];
+assert.equal(collectingIntake.status, 'collecting');
+assert.equal(collectingIntake.conversation_step, 'attachments');
+assert.ok(Array.isArray(collectingIntake.files));
+assert.equal(collectingIntake.files.length, 1);
+
+await handleWhatsAppWebhook({
+  store: intakeStore,
+  uploadRoot,
+  body: {
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: '770700000001', profile: { name: 'Parent One' } }],
+          messages: [{ from: '770700000001', text: { body: 'skip' } }]
+        }
+      }]
+    }]
+  }
+});
+
+const doctorOneIntakes = intakeStore.listIntakes({ doctorId: intakeDoctors[0].doctor_id });
+assert.equal(doctorOneIntakes.length, 1);
+assert.equal(doctorOneIntakes[0].patient_fio, 'Иванов Иван Иванович');
+assert.equal(doctorOneIntakes[0].iin, '123456789012');
+assert.equal(doctorOneIntakes[0].phone, '+770700000001');
+assert.equal(doctorOneIntakes[0].status, 'new');
+assert.equal(doctorOneIntakes[0].conversation_step, 'done');
+assert.ok(doctorOneIntakes[0].analysis_text);
+assert.ok(Array.isArray(doctorOneIntakes[0].files));
+assert.equal(doctorOneIntakes[0].files.length, 1);
+assert.ok(doctorOneIntakes[0].files[0].local_path.includes('mock-image-1'));
+assert.ok(/vision|файл|С„Р°Р№Р»/i.test(doctorOneIntakes[0].analysis_text));
+assert.equal(intakeStore.listIntakes({ doctorId: intakeDoctors[1].doctor_id }).length, 0);
+
+await handleWhatsAppWebhook({
+  store: intakeStore,
+  uploadRoot,
+  body: {
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: '770700000002', profile: { name: 'Parent Two' } }],
+          messages: [{
+            from: '770700000002',
+            text: {
+              body: [
+                doctorToken,
+                'ФИО пациента: Петров Петр',
+                'ИИН: 999888777666',
+                'Телефон: +770700000002',
+                'Жалоба / что беспокоит: плохо спит и быстро устает',
+                'Когда началось: месяц назад',
+                'Красные флаги: нет'
+              ].join('\n')
+            }
+          }]
+        }
+      }]
+    }]
+  }
+});
+
+const oneShot = intakeStore.listIntakes({ doctorId: intakeDoctors[0].doctor_id })
+  .find((item) => item.wa_id === '770700000002');
+assert.ok(oneShot);
+assert.equal(oneShot.patient_fio, 'Петров Петр');
+assert.equal(oneShot.iin, '999888777666');
+assert.equal(oneShot.phone, '+770700000002');
+assert.equal(oneShot.status, 'new');
+assert.equal(oneShot.conversation_step, 'done');
+assert.ok(oneShot.analysis_text);
+intakeStore.close();
+await fs.rm(intakeTempDir, { recursive: true, force: true });
+
 if (originalOpenRouterKey) {
   process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
 }
@@ -526,7 +689,7 @@ assert.equal(isBreakModeCommand('open patient'), false);
 assert.equal(normalizeBreakModeCommand('  Break Mode  '), 'break mode');
 assert.equal(BREAK_MODE_LAYOUT, 'overlay');
 assert.equal(BREAK_WIDGET_DEFAULTS.minHeight, 420);
-assert.equal(BREAK_WIDGET_DEFAULTS.pipeGap, 96);
-assert.equal(BREAK_WIDGET_DEFAULTS.spawnEveryFrames, 126);
+assert.equal(BREAK_WIDGET_DEFAULTS.pipeGap, 120);
+assert.equal(BREAK_WIDGET_DEFAULTS.spawnEveryFrames, 140);
 
 console.log('Smoke test passed');

@@ -121,6 +121,55 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    if (message.type === 'whatsapp-doctors') {
+      sendResponse(await getJson('/api/whatsapp/doctors'));
+      return;
+    }
+
+    if (message.type === 'whatsapp-refresh-qr') {
+      sendResponse(await postJson(`/api/whatsapp/doctors/${encodeURIComponent(message.doctorId)}/qr`, {}));
+      return;
+    }
+
+    if (message.type === 'whatsapp-test-invite') {
+      sendResponse(await postJson('/api/whatsapp/test-invite', {
+        doctorId: message.doctorId,
+        to: message.to
+      }));
+      return;
+    }
+
+    if (message.type === 'whatsapp-intakes') {
+      const params = new URLSearchParams({
+        doctorId: message.doctorId || '',
+        query: message.query || '',
+        status: message.status || ''
+      });
+      sendResponse(await getJson(`/api/whatsapp/intakes?${params.toString()}`));
+      return;
+    }
+
+    if (message.type === 'whatsapp-intake') {
+      const params = new URLSearchParams({ doctorId: message.doctorId || '' });
+      sendResponse(await getJson(`/api/whatsapp/intakes/${encodeURIComponent(message.intakeId)}?${params.toString()}`));
+      return;
+    }
+
+    if (message.type === 'whatsapp-import-intake') {
+      sendResponse(await postJson(`/api/whatsapp/intakes/${encodeURIComponent(message.intakeId)}/import`, {
+        doctorId: message.doctorId
+      }));
+      return;
+    }
+
+    if (message.type === 'whatsapp-intake-status') {
+      sendResponse(await postJson(`/api/whatsapp/intakes/${encodeURIComponent(message.intakeId)}/status`, {
+        doctorId: message.doctorId,
+        status: message.status
+      }));
+      return;
+    }
+
     const tab = await getActiveTab();
     await ensureSandboxTab(tab);
 

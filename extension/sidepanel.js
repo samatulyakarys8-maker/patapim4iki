@@ -36,6 +36,24 @@ const presetListEl = document.querySelector('#presetList');
 const presetCountEl = document.querySelector('#presetCount');
 const assetUploadInputEl = document.querySelector('#assetUploadInput');
 const refreshWorkspaceEl = document.querySelector('#refreshWorkspace');
+const chatViewEl = document.querySelector('#chatView');
+const whatsappViewEl = document.querySelector('#whatsappView');
+const viewTabEls = [...document.querySelectorAll('.view-tab')];
+const whatsappDoctorSelectEl = document.querySelector('#whatsappDoctorSelect');
+const whatsappQrBoxEl = document.querySelector('#whatsappQrBox');
+const whatsappDoctorLinkEl = document.querySelector('#whatsappDoctorLink');
+const refreshWhatsappQrEl = document.querySelector('#refreshWhatsappQr');
+const whatsappDoctorTokenEl = document.querySelector('#whatsappDoctorToken');
+const copyWhatsappTokenEl = document.querySelector('#copyWhatsappToken');
+const whatsappQuestionnaireTextEl = document.querySelector('#whatsappQuestionnaireText');
+const copyWhatsappQuestionnaireEl = document.querySelector('#copyWhatsappQuestionnaire');
+const whatsappTestPhoneEl = document.querySelector('#whatsappTestPhone');
+const sendWhatsappInviteEl = document.querySelector('#sendWhatsappInvite');
+const whatsappTestStatusEl = document.querySelector('#whatsappTestStatus');
+const whatsappSearchEl = document.querySelector('#whatsappSearch');
+const refreshWhatsappIntakesEl = document.querySelector('#refreshWhatsappIntakes');
+const whatsappIntakeListEl = document.querySelector('#whatsappIntakeList');
+const whatsappIntakeDetailEl = document.querySelector('#whatsappIntakeDetail');
 
 const VOICE_IDLE_ICON = `
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -96,7 +114,13 @@ const state = {
   lastProcessedSpeechAt: 0,
   breakModeWidget: null,
   patientAssets: [],
-  patientPresets: []
+  patientPresets: [],
+  activeView: 'chat',
+  whatsappDoctors: [],
+  whatsappSelectedDoctorId: '',
+  whatsappIntakes: [],
+  whatsappSelectedIntakeId: '',
+  importedIntakeNotes: []
 };
 
 async function send(message) {
@@ -157,12 +181,336 @@ function setAdvisorMode(enabled) {
 
 function clearChat() {
   chatTimelineEl.replaceChildren();
+  state.importedIntakeNotes = [];
   appendMessage({
     role: 'assistant',
     title: 'Чат очищен',
     body: 'Готов продолжить прием. Данные пациента и предложения формы не удалены.'
   });
   closeToolsMenu();
+}
+
+function setActiveView(view) {
+  state.activeView = view;
+  document.body.dataset.activeView = view;
+  chatViewEl.hidden = view !== 'chat';
+  whatsappViewEl.hidden = view !== 'whatsapp';
+  for (const button of viewTabEls) {
+    button.classList.toggle('is-active', button.dataset.view === view);
+  }
+  if (view === 'whatsapp') {
+    loadWhatsAppDoctors({ silent: true }).catch(showError);
+  }
+}
+
+function importedIntakeContextText() {
+  return state.importedIntakeNotes.length
+    ? `\n\nКонтекст WhatsApp:\n${state.importedIntakeNotes.join('\n\n')}`
+    : '';
+}
+
+function formatWhatsAppAnalysis(intake) {
+  const analysis = intake.analysis || {};
+  const blocks = [
+    intake.patient_fio ? `Пациент: ${intake.patient_fio}` : '',
+    intake.iin ? `ИИН: ${intake.iin}` : '',
+    intake.phone ? `Телефон: ${intake.phone}` : '',
+    intake.main_complaint ? `Жалоба: ${intake.main_complaint}` : '',
+    analysis.summary ? `Сводка: ${analysis.summary}` : '',
+    Array.isArray(analysis.questions_for_doctor) ? `Что уточнить врачу: ${analysis.questions_for_doctor.join('; ')}` : '',
+    Array.isArray(analysis.red_flags) && analysis.red_flags.length ? `Красные флаги: ${analysis.red_flags.join('; ')}` : '',
+    analysis.attachments_note || ''
+  ].filter(Boolean);
+  return blocks.join('\n');
+}
+
+function renderWhatsAppIntakeDetail(intake) {
+  if (!intake) {
+    whatsappIntakeDetailEl.innerHTML = '<p class="subtitle">Выберите обращение, чтобы увидеть анализ и вложения.</p>';
+    return;
+  }
+
+  const analysis = intake.analysis || {};
+  const filesHtml = (intake.files || []).length
+    ? intake.files.map((file) => `
+        <li class="file-item">
+          <span>${escapeHtml(file.caption || file.mime_type || 'Файл')}</span>
+          <span class="file-meta">${escapeHtml(file.local_path || 'Локальный путь появится после загрузки media')}</span>
+        </li>
+      `).join('')
+    : '<li class="file-item"><span>Вложений нет</span></li>';
+  const messagesHtml = (intake.messages || [])
+    .slice(-8)
+    .map((message) => `<li class="timeline-item"><strong>${escapeHtml(message.role)}</strong><span>${escapeHtml(message.text)}</span></li>`)
+    .join('');
+
+  whatsappIntakeDetailEl.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <p class="eyebrow">WhatsApp intake</p>
+        <h2>${escapeHtml(intake.patient_fio || intake.contact_name || 'Новый пациент')}</h2>
+        <p class="subtitle">${escapeHtml(intake.iin || 'ИИН не указан')} · ${escapeHtml(intake.phone || 'Телефон не указан')}</p>
+      </div>
+      <span class="status-chip">${escapeHtml(intake.status)}</span>
+    </div>
+    <div class="detail-grid">
+      <section class="detail-section">
+        <h3>Жалоба</h3>
+        <p>${escapeHtml(intake.main_complaint || 'Жалоба ещё не заполнена.')}</p>
+      </section>
+      <section class="detail-section">
+        <h3>Анализ</h3>
+        <p>${escapeHtml(analysis.summary || intake.analysis_text || 'Анализ пока не готов.')}</p>
+      </section>
+      <section class="detail-section">
+        <h3>Что уточнить врачу</h3>
+        <ul class="plain-list">${(analysis.questions_for_doctor || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('') || '<li>Пока нет подсказок.</li>'}</ul>
+      </section>
+      <section class="detail-section">
+        <h3>Красные флаги</h3>
+        <ul class="plain-list">${(analysis.red_flags || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('') || '<li>Не отмечены.</li>'}</ul>
+      </section>
+      <section class="detail-section">
+        <h3>Вложения</h3>
+        <ul class="file-list">${filesHtml}</ul>
+      </section>
+      <section class="detail-section">
+        <h3>Последние сообщения</h3>
+        <ul class="timeline-list">${messagesHtml || '<li class="timeline-item"><span>Сообщений пока нет.</span></li>'}</ul>
+      </section>
+    </div>
+    <div class="detail-actions">
+      <button id="importWhatsappIntake" class="primary-button" type="button">Добавить в чат</button>
+      <button id="markWhatsappReviewed" class="ghost-button" type="button">Отметить просмотренным</button>
+    </div>
+  `;
+
+  document.querySelector('#importWhatsappIntake')?.addEventListener('click', () => importWhatsAppIntake(intake.intake_id));
+  document.querySelector('#markWhatsappReviewed')?.addEventListener('click', () => updateWhatsAppIntakeStatus(intake.intake_id, 'reviewed'));
+}
+
+function renderWhatsAppIntakeList() {
+  if (!state.whatsappIntakes.length) {
+    whatsappIntakeListEl.innerHTML = '<p class="subtitle">Пока нет обращений для выбранного врача.</p>';
+    renderWhatsAppIntakeDetail(null);
+    return;
+  }
+
+  whatsappIntakeListEl.innerHTML = state.whatsappIntakes.map((intake) => `
+    <button class="intake-card ${intake.intake_id === state.whatsappSelectedIntakeId ? 'is-active' : ''}" type="button" data-intake-id="${intake.intake_id}">
+      <span class="card-row">
+        <strong>${escapeHtml(intake.patient_fio || intake.contact_name || 'Без имени')}</strong>
+        <span class="status-chip">${escapeHtml(intake.status)}</span>
+      </span>
+      <span class="card-meta">${escapeHtml(intake.iin || 'ИИН не указан')} · ${escapeHtml(intake.phone || 'Телефон не указан')}</span>
+      <span class="card-preview">${escapeHtml(intake.main_complaint || 'Жалоба появится после первых ответов.')}</span>
+      ${(intake.files || []).length ? `<span class="card-meta">Вложения: ${(intake.files || []).length}</span>` : ''}
+    </button>
+  `).join('');
+
+  for (const button of whatsappIntakeListEl.querySelectorAll('[data-intake-id]')) {
+    button.addEventListener('click', () => openWhatsAppIntake(button.dataset.intakeId));
+  }
+}
+
+function renderWhatsAppDoctor(doctor) {
+  if (!doctor) {
+    whatsappQrBoxEl.innerHTML = '<p class="subtitle">Выберите врача, чтобы показать QR.</p>';
+    whatsappDoctorLinkEl.href = '#';
+    whatsappDoctorLinkEl.textContent = 'Открыть WhatsApp ссылку';
+    if (whatsappDoctorTokenEl) whatsappDoctorTokenEl.textContent = '...';
+    if (whatsappQuestionnaireTextEl) whatsappQuestionnaireTextEl.value = '';
+    if (copyWhatsappTokenEl) copyWhatsappTokenEl.disabled = true;
+    if (copyWhatsappQuestionnaireEl) copyWhatsappQuestionnaireEl.disabled = true;
+    if (sendWhatsappInviteEl) sendWhatsappInviteEl.disabled = true;
+    return;
+  }
+  whatsappQrBoxEl.innerHTML = doctor.qr_data_url
+    ? `<img class="qr-image" src="${doctor.qr_data_url}" alt="QR врача для WhatsApp" />`
+    : '<p class="subtitle">QR пока недоступен.</p>';
+  whatsappDoctorLinkEl.href = doctor.whatsapp_url || '#';
+  whatsappDoctorLinkEl.textContent = doctor.whatsapp_url || 'Открыть WhatsApp ссылку';
+  if (whatsappDoctorTokenEl) whatsappDoctorTokenEl.textContent = doctor.qr_token || '...';
+  if (whatsappQuestionnaireTextEl) whatsappQuestionnaireTextEl.value = buildWhatsAppQuestionnaireText(doctor);
+  if (copyWhatsappTokenEl) copyWhatsappTokenEl.disabled = !doctor.qr_token;
+  if (copyWhatsappQuestionnaireEl) copyWhatsappQuestionnaireEl.disabled = !doctor.qr_token;
+  if (sendWhatsappInviteEl) sendWhatsappInviteEl.disabled = false;
+}
+
+function buildWhatsAppQuestionnaireText(doctor) {
+  const token = doctor?.qr_token || '';
+  return [
+    token,
+    '',
+    'Начнем консультацию. Анкета для врача. Ответьте одним сообщением, заполните строки после двоеточия:',
+    'ФИО пациента: ',
+    'ИИН: ',
+    'Телефон: ',
+    'Жалоба / что беспокоит: ',
+    'Когда началось: ',
+    'Где сильнее проявляется: ',
+    'Речь, внимание, обучение, игра: ',
+    'Сон, аппетит, тревожность, истерики: ',
+    'Что помогает: ',
+    'Красные флаги: судороги, резкое ухудшение, самоповреждение, опасное поведение? ',
+    'Фото/документы: можно отправить отдельным сообщением после этой анкеты.'
+  ].join('\n');
+}
+
+function selectedWhatsAppDoctor() {
+  return state.whatsappDoctors.find((doctor) => doctor.doctor_id === state.whatsappSelectedDoctorId) || null;
+}
+
+async function copyWhatsAppDoctorToken() {
+  const doctor = selectedWhatsAppDoctor();
+  if (!doctor?.qr_token) return;
+  await navigator.clipboard.writeText(doctor.qr_token);
+  if (whatsappTestStatusEl) {
+    whatsappTestStatusEl.textContent = 'Doctor-token скопирован. Пациент должен отправить его в WhatsApp чат.';
+  }
+}
+
+async function copyWhatsAppQuestionnaire() {
+  const text = whatsappQuestionnaireTextEl?.value || '';
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  if (whatsappTestStatusEl) {
+    whatsappTestStatusEl.textContent = 'Анкета скопирована. После hello_world пациент может вставить её одним сообщением в WhatsApp.';
+  }
+}
+
+async function sendWhatsAppTestInvite() {
+  const doctor = selectedWhatsAppDoctor();
+  const phone = whatsappTestPhoneEl?.value.trim() || '';
+  if (!doctor) {
+    throw new Error('Выберите врача для WhatsApp QR.');
+  }
+  if (!phone) {
+    throw new Error('Введите номер пациента из Meta API Setup → To.');
+  }
+
+  if (whatsappTestStatusEl) {
+    whatsappTestStatusEl.textContent = 'Отправляю тестовое приглашение через Meta...';
+  }
+  const result = await send({
+    type: 'whatsapp-test-invite',
+    doctorId: doctor.doctor_id,
+    to: phone
+  });
+  if (!result.ok) {
+    throw new Error(result.error || result.details || 'Meta не отправила тестовое приглашение.');
+  }
+
+  const suffix = result.instructionError
+    ? ` Шаблон отправлен, но текст с token не прошёл: ${result.instructionError}. Скопируйте token вручную: ${result.manualToken}`
+    : ` Пациенту нужно ответить token: ${result.manualToken}`;
+  if (whatsappTestStatusEl) {
+    whatsappTestStatusEl.textContent = `Приглашение отправлено.${suffix}`;
+  }
+}
+
+async function loadWhatsAppDoctors({ silent = false } = {}) {
+  const result = await send({ type: 'whatsapp-doctors' });
+  if (!result.ok) throw new Error(result.error || 'Не удалось получить список врачей WhatsApp.');
+  state.whatsappDoctors = result.doctors || [];
+  if (!state.whatsappSelectedDoctorId || !state.whatsappDoctors.some((doctor) => doctor.doctor_id === state.whatsappSelectedDoctorId)) {
+    state.whatsappSelectedDoctorId = state.whatsappDoctors[0]?.doctor_id || '';
+  }
+  localStorage.setItem('damumed-whatsapp-doctor-id', state.whatsappSelectedDoctorId);
+  whatsappDoctorSelectEl.innerHTML = state.whatsappDoctors.map((doctor) => `
+    <option value="${doctor.doctor_id}" ${doctor.doctor_id === state.whatsappSelectedDoctorId ? 'selected' : ''}>${escapeHtml(doctor.display_name)}</option>
+  `).join('');
+  renderWhatsAppDoctor(state.whatsappDoctors.find((doctor) => doctor.doctor_id === state.whatsappSelectedDoctorId));
+  if (state.whatsappSelectedDoctorId) {
+    await loadWhatsAppIntakes({ silent: true });
+  } else {
+    state.whatsappIntakes = [];
+    renderWhatsAppIntakeList();
+  }
+  if (!silent) {
+    setStatus('QR врача и обращения WhatsApp обновлены.');
+  }
+  return result;
+}
+
+async function refreshWhatsAppQr() {
+  if (!state.whatsappSelectedDoctorId) return;
+  const result = await send({ type: 'whatsapp-refresh-qr', doctorId: state.whatsappSelectedDoctorId });
+  if (!result.ok) throw new Error(result.error || 'Не удалось обновить QR врача.');
+  const updated = result.doctor;
+  state.whatsappDoctors = state.whatsappDoctors.map((doctor) => doctor.doctor_id === updated.doctor_id ? updated : doctor);
+  renderWhatsAppDoctor(updated);
+}
+
+async function loadWhatsAppIntakes({ silent = false } = {}) {
+  if (!state.whatsappSelectedDoctorId) return;
+  const result = await send({
+    type: 'whatsapp-intakes',
+    doctorId: state.whatsappSelectedDoctorId,
+    query: whatsappSearchEl.value.trim()
+  });
+  if (!result.ok) throw new Error(result.error || 'Не удалось получить обращения WhatsApp.');
+  state.whatsappIntakes = result.intakes || [];
+  if (!state.whatsappIntakes.some((item) => item.intake_id === state.whatsappSelectedIntakeId)) {
+    state.whatsappSelectedIntakeId = state.whatsappIntakes[0]?.intake_id || '';
+  }
+  renderWhatsAppIntakeList();
+  if (state.whatsappSelectedIntakeId) {
+    await openWhatsAppIntake(state.whatsappSelectedIntakeId, { silent: true });
+  } else {
+    renderWhatsAppIntakeDetail(null);
+  }
+  if (!silent) {
+    setStatus('Список WhatsApp-обращений обновлен.');
+  }
+}
+
+async function openWhatsAppIntake(intakeId, { silent = false } = {}) {
+  const result = await send({
+    type: 'whatsapp-intake',
+    doctorId: state.whatsappSelectedDoctorId,
+    intakeId
+  });
+  if (!result.ok) throw new Error(result.error || 'Не удалось открыть WhatsApp-обращение.');
+  state.whatsappSelectedIntakeId = intakeId;
+  renderWhatsAppIntakeList();
+  renderWhatsAppIntakeDetail(result.intake);
+  if (!silent) {
+    setStatus('Карточка WhatsApp-обращения открыта.');
+  }
+}
+
+async function updateWhatsAppIntakeStatus(intakeId, status) {
+  const result = await send({
+    type: 'whatsapp-intake-status',
+    doctorId: state.whatsappSelectedDoctorId,
+    intakeId,
+    status
+  });
+  if (!result.ok) throw new Error(result.error || 'Не удалось обновить статус обращения.');
+  await loadWhatsAppIntakes({ silent: true });
+  await openWhatsAppIntake(intakeId, { silent: true });
+  setStatus('Статус WhatsApp-обращения обновлен.');
+}
+
+async function importWhatsAppIntake(intakeId) {
+  const result = await send({
+    type: 'whatsapp-import-intake',
+    doctorId: state.whatsappSelectedDoctorId,
+    intakeId
+  });
+  if (!result.ok) throw new Error(result.error || 'Не удалось импортировать WhatsApp-обращение.');
+  const intake = result.intake;
+  const note = formatWhatsAppAnalysis(intake);
+  state.importedIntakeNotes = [note, ...state.importedIntakeNotes.filter((item) => item !== note)].slice(0, 3);
+  setActiveView('chat');
+  appendMessage({
+    role: 'assistant',
+    title: 'WhatsApp intake',
+    body: result.message?.body || note
+  });
+  setStatus('Анализ из WhatsApp добавлен в чат ассистента.');
+  await loadWhatsAppIntakes({ silent: true });
 }
 
 function escapeText(value) {
@@ -302,6 +650,16 @@ function renderWorkspaceDeck() {
     }
   }
 }
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function appendMessage({ role = 'assistant', title = '', body = '', cards = [], tone = '' }) {
   const article = document.createElement('article');
   article.className = ['message', role, tone].filter(Boolean).join(' ');
@@ -1124,15 +1482,16 @@ async function fetchAdvisorDirect(question) {
 async function askAdvisor(question, { quietUserMessage = false, title = 'Советчик' } = {}) {
   const text = String(question || '').trim();
   if (!text) return { ok: false, error: 'empty_question' };
+  const advisorQuestion = `${text}${importedIntakeContextText()}`;
   if (!quietUserMessage) {
     appendMessage({ role: 'user', title: 'Врач', body: text });
   }
   setStatus('Советчик анализирует прием.');
 
-  const initialResult = await send({ type: 'advisor-analyze', question: text })
+  const initialResult = await send({ type: 'advisor-analyze', question: advisorQuestion })
     .catch((error) => ({ ok: false, error: advisorErrorMessage(error) }));
   const result = !initialResult.ok && isUnsupportedAdvisorError(initialResult)
-    ? await fetchAdvisorDirect(text)
+    ? await fetchAdvisorDirect(advisorQuestion)
     : initialResult;
 
   if (!result.ok) {
@@ -1715,6 +2074,21 @@ function initEvents() {
   themeToggleEl.addEventListener('click', () => {
     setTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
   });
+  for (const button of viewTabEls) {
+    button.addEventListener('click', () => setActiveView(button.dataset.view));
+  }
+  whatsappDoctorSelectEl.addEventListener('change', async (event) => {
+    state.whatsappSelectedDoctorId = event.target.value;
+    localStorage.setItem('damumed-whatsapp-doctor-id', state.whatsappSelectedDoctorId);
+    renderWhatsAppDoctor(state.whatsappDoctors.find((doctor) => doctor.doctor_id === state.whatsappSelectedDoctorId));
+    await loadWhatsAppIntakes({ silent: true });
+  });
+  refreshWhatsappQrEl.addEventListener('click', () => refreshWhatsAppQr().catch(showError));
+  copyWhatsappTokenEl?.addEventListener('click', () => copyWhatsAppDoctorToken().catch(showError));
+  copyWhatsappQuestionnaireEl?.addEventListener('click', () => copyWhatsAppQuestionnaire().catch(showError));
+  sendWhatsappInviteEl?.addEventListener('click', () => sendWhatsAppTestInvite().catch(showError));
+  refreshWhatsappIntakesEl.addEventListener('click', () => loadWhatsAppIntakes().catch(showError));
+  whatsappSearchEl.addEventListener('input', () => loadWhatsAppIntakes({ silent: true }).catch(showError));
   document.addEventListener('click', (event) => {
     if (!toolsMenuEl.hidden && !event.target.closest('.tools-wrap')) {
       closeToolsMenu();
@@ -1743,10 +2117,12 @@ function initEvents() {
 
 function init() {
   setTheme(localStorage.getItem('damumed-assistant-theme') || 'light');
+  state.whatsappSelectedDoctorId = localStorage.getItem('damumed-whatsapp-doctor-id') || '';
   updateAdvisorUi();
   renderWorkspaceDeck();
   initEvents();
   document.body.dataset.buildId = EXTENSION_BUILD_ID;
+  setActiveView('chat');
   appendMessage({
     role: 'assistant',
     title: 'Готов к приему',
