@@ -7,7 +7,8 @@
     "generate:artifacts": "node scripts/generate-artifacts.mjs",
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "test": "node scripts/smoke-test.mjs"
+    "test": "node scripts/smoke-test.mjs",
+    "test:voice": "node scripts/voice-eval.mjs"
   },
   "keywords": [],
   "author": "",

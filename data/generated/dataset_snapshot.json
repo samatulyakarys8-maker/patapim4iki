@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-17T18:16:42.346Z",
+  "generated_at": "2026-04-18T07:45:12.447Z",
   "dataset_paths": {
     "officialRoots": {
       "consult": "/mnt/data/unzipped/consult",
@@ -459,6 +459,142 @@
         "Show preview in extension side panel",
         "Apply approved patches through DOM engine",
         "Write audit entry"
+      ]
+    },
+    {
+      "workflow_id": "voice-navigation-dom-agent",
+      "title": "Voice navigation through Damumed-like DOM",
+      "steps": [
+        "Listen to doctor command",
+        "Resolve navigation intent from source-of-truth targets",
+        "Find visible tab/link/button in DOM context",
+        "Build safe DOM operations without raw JavaScript",
+        "Apply navigation through content script",
+        "Show DOM proof and proactive next-step hint"
+      ]
+    }
+  ],
+  "navigation_targets": [
+    {
+      "target_key": "primary_visit",
+      "labels": [
+        "Первичный прием",
+        "Первичный осмотр",
+        "Назначение"
+      ],
+      "screen_id": "inspection",
+      "tab_key": "inspection",
+      "document_type": "form",
+      "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"inspection\"]",
+      "fallback_label_match": "назначение|первичный прием|первичный осмотр"
+    },
+    {
+      "target_key": "discharge_summary",
+      "labels": [
+        "Выписной эпикриз",
+        "Эпикриз",
+        "Выписка"
+      ],
+      "screen_id": "inspection",
+      "tab_key": "dischargeSummary",
+      "document_type": "readonly-document",
+      "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"dischargeSummary\"]",
+      "fallback_label_match": "выписной эпикриз|эпикриз|выписка"
+    },
+    {
+      "target_key": "medical_records",
+      "labels": [
+        "Медицинские записи"
+      ],
+      "screen_id": "inspection",
+      "tab_key": "medicalRecords",
+      "document_type": "readonly-tab",
+      "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"medicalRecords\"]",
+      "fallback_label_match": "медицинские записи|мед записи"
+    },
+    {
+      "target_key": "diagnoses",
+      "labels": [
+        "Диагнозы"
+      ],
+      "screen_id": "inspection",
+      "tab_key": "diagnoses",
+      "document_type": "readonly-tab",
+      "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"diagnoses\"]",
+      "fallback_label_match": "диагнозы|диагноз"
+    },
+    {
+      "target_key": "diaries",
+      "labels": [
+        "Дневниковые записи"
+      ],
+      "screen_id": "inspection",
+      "tab_key": "diaries",
+      "document_type": "readonly-tab",
+      "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"diaries\"]",
+      "fallback_label_match": "дневниковые записи|дневник"
+    },
+    {
+      "target_key": "files",
+      "labels": [
+        "Файлы"
+      ],
+      "screen_id": "inspection",
+      "tab_key": "files",
+      "document_type": "readonly-tab",
+      "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"files\"]",
+      "fallback_label_match": "файлы|файл"
+    },
+    {
+      "target_key": "schedule",
+      "labels": [
+        "Расписание",
+        "График",
+        "Консультация и диагностика"
+      ],
+      "screen_id": "schedule",
+      "tab_key": "",
+      "document_type": "screen",
+      "preferred_selector": "",
+      "fallback_label_match": "расписание|график|назад"
+    }
+  ],
+  "process_steps": [
+    {
+      "step_key": "schedule_open",
+      "required_screen": "schedule",
+      "completion_condition": "schedule screen is visible",
+      "next_suggestions": [
+        "open_patient",
+        "change_schedule_day"
+      ]
+    },
+    {
+      "step_key": "inspection_open",
+      "required_screen": "inspection",
+      "completion_condition": "appointment form is visible",
+      "next_suggestions": [
+        "start_listening",
+        "open_primary_visit"
+      ]
+    },
+    {
+      "step_key": "inspection_fill",
+      "required_screen": "inspection",
+      "completion_condition": "required medical fields completed",
+      "next_suggestions": [
+        "apply_draft",
+        "save_and_close",
+        "generate_procedure_schedule"
+      ]
+    },
+    {
+      "step_key": "completed",
+      "required_screen": "schedule",
+      "completion_condition": "appointment status is completed",
+      "next_suggestions": [
+        "generate_procedure_schedule",
+        "open_next_patient"
       ]
     }
   ],

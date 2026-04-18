@@ -6,15 +6,20 @@ import { fileURLToPath } from 'node:url';
 import { buildArtifacts, seedRuntimeState, writeArtifacts } from './lib/dataset.mjs';
 import {
   applyInspectionSave,
+  acceptProcedureSchedule,
   buildApplyPreview,
+  buildProcedureSchedulePreview,
   buildHints,
   createAuditEntry,
+  executeIntentPreview,
   getAppointmentById,
+  getDeepgramRealtimeConfig,
   getDraftState,
   getPatientById,
   inferScreenId,
   ingestTranscript,
   markPreviewApplied,
+  observeAgent,
   previewCommand,
   startSpeechSession,
   stopSpeechSession,
@@ -52,6 +57,7 @@ loadLocalEnv();
 await writeArtifacts(GENERATED_DIR);
 const artifacts = buildArtifacts();
 const runtime = seedRuntimeState(artifacts);
+await fsp.writeFile(path.join(GENERATED_DIR, 'voice_lexicon.json'), JSON.stringify(runtime.voiceLexicon, null, 2), 'utf8');
 await persistRuntime();
 
 function sendJson(res, statusCode, payload) {
@@ -318,6 +324,57 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/speech/deepgram/config') {
+    const config = getDeepgramRealtimeConfig();
+    if (!config.apiKeyConfigured) {
+      return sendJson(res, 400, {
+        ok: false,
+        provider: 'deepgram',
+        error: 'DEEPGRAM_API_KEY is not configured on the local backend.'
+      });
+    }
+    let permissionCheck = {
+      checked: false,
+      ok: true,
+      status: null,
+      reason: null
+    };
+    try {
+      const grantResponse = await fetch('https://api.deepgram.com/v1/auth/grant', {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${config.apiKey}`
+        }
+      });
+      const details = await grantResponse.text();
+      let parsed = null;
+      try {
+        parsed = JSON.parse(details);
+      } catch {
+        // Keep diagnostics structured without leaking response bodies into the extension UI.
+      }
+      permissionCheck = {
+        checked: true,
+        ok: grantResponse.ok,
+        status: grantResponse.status,
+        reason: parsed?.err_msg || parsed?.error || (grantResponse.ok ? null : 'Deepgram permission check failed.')
+      };
+    } catch (error) {
+      permissionCheck = {
+        checked: true,
+        ok: false,
+        status: null,
+        reason: error.message || 'Deepgram permission check failed.'
+      };
+    }
+    return sendJson(res, 200, {
+      ok: true,
+      realtimeUsable: permissionCheck.ok,
+      permissionCheck,
+      ...config
+    });
+  }
+
   if (req.method === 'POST' && /^\/api\/speech\/session\/[^/]+\/chunk$/.test(url.pathname)) {
     const sessionId = url.pathname.split('/')[4];
     const session = runtime.speechSessions[sessionId];
@@ -399,6 +456,47 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, preview);
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/agent/observe') {
+    const body = await readBody(req);
+    const observation = await observeAgent(runtime, {
+      screenContext: body.screenContext || {},
+      transcriptDelta: body.transcriptDelta || '',
+      command: body.command || ''
+    });
+    addAudit(createAuditEntry({
+      actorType: 'agent',
+      actionType: 'observe',
+      screenId: inferScreenId(body.screenContext || {}),
+      entityRefs: {
+        appointment_id: body.screenContext?.selected_appointment_id || null,
+        patient_id: body.screenContext?.selected_patient_id || null
+      },
+      payload: { command: body.command, transcriptDelta: body.transcriptDelta, screenContext: body.screenContext },
+      result: observation.intents?.[0]?.type || 'observed'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, observation);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent/execute-intent-preview') {
+    const body = await readBody(req);
+    const preview = executeIntentPreview(runtime, {
+      intent: body.intent,
+      command: body.command,
+      screenContext: body.screenContext || {}
+    });
+    addAudit(createAuditEntry({
+      actorType: 'agent',
+      actionType: 'execute_intent_preview',
+      screenId: inferScreenId(body.screenContext || {}),
+      entityRefs: { appointment_id: body.screenContext?.selected_appointment_id || null },
+      payload: body,
+      result: preview.intent?.type || 'preview_ready'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, preview);
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/transcripts/ingest') {
     const body = await readBody(req);
     const transcript = await ingestTranscript(runtime, {
@@ -450,6 +548,36 @@ async function handleApi(req, res, url) {
     const draftState = markPreviewApplied(runtime, appointmentId, body.patchIds || []);
     await persistRuntime();
     return sendJson(res, 200, { draftState });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/procedure-schedule/preview') {
+    const body = await readBody(req);
+    const draft = buildProcedureSchedulePreview(runtime, { appointmentId: body.appointmentId });
+    addAudit(createAuditEntry({
+      actorType: 'agent',
+      actionType: 'procedure_schedule_preview',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: body.appointmentId, patient_id: draft.patient_id },
+      payload: { day_count: draft.days.length },
+      result: 'suggested'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { draft });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/procedure-schedule/accept') {
+    const body = await readBody(req);
+    const draft = acceptProcedureSchedule(runtime, body.draftId);
+    addAudit(createAuditEntry({
+      actorType: 'extension',
+      actionType: 'procedure_schedule_accept',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: draft.appointment_id, patient_id: draft.patient_id },
+      payload: { draft_id: draft.draft_id },
+      result: 'accepted'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { draft });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/audit') {

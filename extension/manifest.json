@@ -3,10 +3,10 @@
   "name": "Damumed External Agent",
   "version": "1.0.0",
   "description": "External AI agent for the Damumed sandbox phase 1 demo",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "audioCapture"],
-  "host_permissions": ["http://localhost:3030/*", "http://127.0.0.1:3030/*", "https://api.elevenlabs.io/*"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel"],
+  "host_permissions": ["http://localhost:3030/*", "http://127.0.0.1:3030/*", "https://api.elevenlabs.io/*", "https://api.deepgram.com/*"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:3030 http://127.0.0.1:3030 https://api.elevenlabs.io wss://api.elevenlabs.io"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:3030 http://127.0.0.1:3030 https://api.elevenlabs.io wss://api.elevenlabs.io https://api.deepgram.com wss://api.deepgram.com"
   },
   "background": {
     "service_worker": "background.js",

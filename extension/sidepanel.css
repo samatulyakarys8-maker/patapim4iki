@@ -101,6 +101,24 @@ textarea {
   margin-bottom: 10px;
 }
 
+.settings-grid {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toggle-row input {
+  accent-color: var(--brand);
+}
+
 .steps,
 .plain-list {
   margin: 0 0 10px;
@@ -127,4 +145,17 @@ textarea {
   border-radius: 12px;
   background: #020617;
   color: var(--muted);
+}
+
+.speaker-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.compact-code {
+  max-height: 120px;
+  margin: 0;
 }

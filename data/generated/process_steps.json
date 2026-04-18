@@ -1,0 +1,39 @@
+[
+  {
+    "step_key": "schedule_open",
+    "required_screen": "schedule",
+    "completion_condition": "schedule screen is visible",
+    "next_suggestions": [
+      "open_patient",
+      "change_schedule_day"
+    ]
+  },
+  {
+    "step_key": "inspection_open",
+    "required_screen": "inspection",
+    "completion_condition": "appointment form is visible",
+    "next_suggestions": [
+      "start_listening",
+      "open_primary_visit"
+    ]
+  },
+  {
+    "step_key": "inspection_fill",
+    "required_screen": "inspection",
+    "completion_condition": "required medical fields completed",
+    "next_suggestions": [
+      "apply_draft",
+      "save_and_close",
+      "generate_procedure_schedule"
+    ]
+  },
+  {
+    "step_key": "completed",
+    "required_screen": "schedule",
+    "completion_condition": "appointment status is completed",
+    "next_suggestions": [
+      "generate_procedure_schedule",
+      "open_next_patient"
+    ]
+  }
+]

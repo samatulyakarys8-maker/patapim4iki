@@ -1,0 +1,39 @@
+{
+  "commands": [
+    { "text": "открой медицинские записи", "intent": "open_tab", "actionTarget": "medical-records" },
+    { "text": "мед записи открой", "intent": "open_tab", "actionTarget": "medical-records" },
+    { "text": "перейди в назначения", "intent": "open_tab", "actionTarget": "assignments" },
+    { "text": "открой дневник", "intent": "open_tab", "actionTarget": "diaries" },
+    { "text": "открой диагноз", "intent": "open_tab", "actionTarget": "diagnoses" },
+    { "text": "открой файлы", "intent": "open_tab", "actionTarget": "files" },
+    { "text": "перейди к выписке", "intent": "open_tab", "actionTarget": "discharge-summary" },
+    { "text": "сохрани и закрой", "intent": "save_record", "actionTarget": "save-and-close" },
+    { "text": "сформируй график", "intent": "generate_schedule", "actionTarget": "procedure-schedule" },
+    { "text": "отметь выполнено", "intent": "complete_service", "actionTarget": "completed" }
+  ],
+  "patients": [
+    { "text": "открой рахметолла", "patientId": "patient-1" },
+    { "text": "открой айкуним", "patientId": "patient-1" },
+    { "text": "найди рахметула айкуным", "patientId": "patient-1" },
+    { "text": "открой темирбай", "patientId": "patient-3" },
+    { "text": "открой нуржан", "patientId": "patient-3" },
+    { "text": "к нуржану перейди", "patientId": "patient-3" },
+    { "text": "перейди к куттыбекулы", "patientId": "patient-4" },
+    { "text": "найди нурали", "patientId": "patient-4" },
+    { "text": "открой амина", "patientId": "patient-6" },
+    { "text": "найди каракойшин", "patientId": "patient-2" },
+    { "text": "открой анкар", "patientId": "patient-5" },
+    { "text": "otkroi nurzhan", "patientId": "patient-3" },
+    { "text": "rahmetolla aikunim", "patientId": "patient-1" }
+  ],
+  "ambiguous": [
+    { "text": "открой нур", "status": "ambiguous" },
+    { "text": "открой пациента", "status": "not_found" }
+  ],
+  "falseTriggers": [
+    "у меня болит голова",
+    "мама говорит дома устает",
+    "рекомендую занятия",
+    "в заключении указать динамику"
+  ]
+}
