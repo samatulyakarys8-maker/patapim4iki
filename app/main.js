@@ -397,7 +397,7 @@ function renderSchedule() {
         <div id="schedule">
           <ul class="schedule-list">
             ${scheduleDay.slots.map((slot) => `
-              <li class="slot-card" data-slot-id="${escapeHtml(slot.slot_id)}" data-appointment-id="${escapeHtml(slot.appointment_id)}">
+              <li class="slot-card" data-slot-id="${escapeHtml(slot.slot_id)}" data-appointment-id="${escapeHtml(slot.appointment_id)}" data-patient-id="${escapeHtml(slot.patient.patient_id)}" data-patient-name="${escapeHtml(slot.patient.full_name)}">
                 <div class="slot-header">
                   <div>
                     <h3>${escapeHtml(formatPersonName(slot.patient?.full_name) || '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e\u0435 \u043e\u043a\u043d\u043e')}</h3>
@@ -424,7 +424,7 @@ function renderSchedule() {
 
 function renderReadonlyTab(title, items, renderer) {
   return `
-    <div class="readonly-card">
+    <div class="readonly-card" data-document-title="${escapeHtml(title)}">
       <h4>${escapeHtml(title)}</h4>
       ${items.map(renderer).join('')}
     </div>
@@ -440,6 +440,7 @@ function renderInspection() {
     ['inspection', 'Назначение'],
     ['assignments', 'Назначения'],
     ['medicalRecords', 'Медицинские записи'],
+    ['dischargeSummary', 'Выписной эпикриз'],
     ['healthIndicators', 'Показатель здоровья пациента'],
     ['diaries', 'Дневниковые записи'],
     ['diagnoses', 'Диагнозы'],
@@ -539,7 +540,8 @@ function renderInspection() {
       </form>
     `,
     assignments: renderReadonlyTab('Назначения', readonly.assignments, (item) => `<p><strong>${escapeHtml(item.title)}</strong><br /><span class="muted">Статус: ${escapeHtml(item.status)}</span></p>`),
-    medicalRecords: renderReadonlyTab('Медицинские записи', readonly.medicalRecords, (item) => `<p><strong>${escapeHtml(item.title)}</strong><br /><span class="muted">Обновлено: ${escapeHtml(item.updated_at)}</span></p>`),
+    medicalRecords: renderReadonlyTab('Медицинские записи', readonly.medicalRecords, (item) => `<p data-document-title="${escapeHtml(item.title)}" data-document-type="medical-record"><strong>${escapeHtml(item.title)}</strong><br /><span class="muted">Обновлено: ${escapeHtml(item.updated_at)}</span></p>`),
+    dischargeSummary: renderReadonlyTab('Выписной эпикриз', readonly.dischargeSummary || [], (item) => `<article data-document-title="${escapeHtml(item.title)}" data-document-type="discharge-summary"><p><strong>${escapeHtml(item.title)}</strong><br /><span class="muted">Обновлено: ${escapeHtml(item.updated_at)}</span></p><p>${escapeHtml(item.text)}</p></article>`),
     healthIndicators: renderReadonlyTab('Показатель здоровья пациента', readonly.healthIndicators, (item) => `<p><strong>${escapeHtml(item.label)}</strong><br /><span class="muted">${escapeHtml(item.value)}</span></p>`),
     diaries: renderReadonlyTab('Дневниковые записи', readonly.diaries, (item) => `<p>${escapeHtml(item.note)}</p>`),
     diagnoses: renderReadonlyTab('Диагнозы', readonly.diagnoses, (item) => `<p><strong>${escapeHtml(item.code)}</strong><br /><span class="muted">${escapeHtml(item.label)}</span></p>`),
@@ -547,7 +549,7 @@ function renderInspection() {
   };
 
   return `
-    <section class="card" data-screen="inspection">
+    <section class="card" data-screen="inspection" data-patient-id="${escapeHtml(patient.patient_id)}" data-patient-name="${escapeHtml(patient.full_name)}" data-appointment-id="${escapeHtml(appointment.appointment_id)}">
       <div class="inspection-summary">
         <div>
           <div class="badges">

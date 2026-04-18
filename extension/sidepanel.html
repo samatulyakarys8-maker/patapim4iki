@@ -11,47 +11,43 @@
       <section class="block">
         <h1>Damumed Agent</h1>
         <p>Работает только поверх песочницы на `http://localhost:3030`.</p>
-        <div id="globalStatus" class="status-note">Готово к работе. Сначала откройте форму назначения в песочнице.</div>
-        <button id="refreshContext" class="button">Определить экран</button>
+        <div id="globalStatus" class="status-note">Нажмите “Начать режим работы” и говорите команду врачу.</div>
+        <button id="refreshContext" class="ghost-button">Проверить DOM-связь</button>
         <pre id="screenContext" class="code"></pre>
       </section>
 
       <section class="block">
-        <h2>Транскрипт и запись</h2>
-        <p class="hint">Форма остаётся пустой, пока вы не примените черновик. Во время записи extension использует realtime STT и собирает черновик отдельно от DOM.</p>
+        <h2>Голосовой агент</h2>
+        <p class="hint">Говорите без ручного ввода: “Открой первичный прием Иванова”, “Перейди к выписному эпикризу”, “Открой медицинские записи”.</p>
         <div class="row wrap">
-          <button id="startRecording" class="button" type="button">Начать запись</button>
-          <button id="stopRecording" class="ghost-button" type="button" disabled>Остановить запись</button>
-          <button id="loadDraft" class="secondary-button" type="button">Обновить черновик</button>
+          <button id="startRecording" class="button" type="button">Начать режим работы</button>
+          <button id="stopRecording" class="ghost-button" type="button" disabled>Остановить агента</button>
         </div>
         <div id="recordingState" class="status-note">Запись не запущена.</div>
-        <select id="speakerTag">
-          <option value="auto">Определить автоматически</option>
-          <option value="doctor">Врач</option>
-          <option value="caregiver">Родитель / сопровождающий</option>
-          <option value="patient">Пациент</option>
-          <option value="unknown">Неизвестно</option>
-        </select>
-        <textarea id="transcriptInput" placeholder="Если микрофон недоступен, вставьте сюда готовый транскрипт приема."></textarea>
-        <div class="examples">
-          <button id="exampleDoctor" class="ghost-button" type="button">Пример врача</button>
-          <button id="exampleCaregiver" class="ghost-button" type="button">Пример родителя</button>
+        <div class="speaker-panel">
+          <strong>Режим Патапима</strong>
+          <p class="hint">Скажите: “режим доктора Патапима”, затем пациент говорит: “я пациент”. Агент закрепит роли голосов.</p>
+          <pre id="speakerOutput" class="code compact-code"></pre>
         </div>
-        <div class="row wrap">
-          <button id="ingestTranscript" class="secondary-button" type="button">Вставить транскрипт</button>
-        </div>
+        <h3>Последняя распознанная команда</h3>
         <pre id="transcriptOutput" class="code"></pre>
       </section>
 
       <section class="block">
-        <h2>Черновик формы</h2>
-        <div class="row wrap">
-          <button id="applyPreview" class="button" type="button">Применить в форму</button>
-          <button id="saveInspection" class="ghost-button" type="button">Сохранить</button>
-          <button id="saveCloseInspection" class="secondary-button" type="button">Сохранить и закрыть</button>
-        </div>
-        <pre id="draftOutput" class="code"></pre>
+        <h2>Результат выполнения</h2>
+        <pre id="intentOutput" class="code"></pre>
         <pre id="actionOutput" class="code"></pre>
+      </section>
+
+      <section class="block">
+        <h2>DOM-действия</h2>
+        <p class="hint">Proof для судей: selector, операция, результат и причина.</p>
+        <pre id="domProofOutput" class="code"></pre>
+      </section>
+
+      <section class="block">
+        <h2>Подсказки следующего шага</h2>
+        <pre id="hintsOutput" class="code"></pre>
       </section>
     </main>
     <script type="module" src="sidepanel.js"></script>

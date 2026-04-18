@@ -1,0 +1,85 @@
+[
+  {
+    "target_key": "primary_visit",
+    "labels": [
+      "Первичный прием",
+      "Первичный осмотр",
+      "Назначение"
+    ],
+    "screen_id": "inspection",
+    "tab_key": "inspection",
+    "document_type": "form",
+    "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"inspection\"]",
+    "fallback_label_match": "назначение|первичный прием|первичный осмотр"
+  },
+  {
+    "target_key": "discharge_summary",
+    "labels": [
+      "Выписной эпикриз",
+      "Эпикриз",
+      "Выписка"
+    ],
+    "screen_id": "inspection",
+    "tab_key": "dischargeSummary",
+    "document_type": "readonly-document",
+    "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"dischargeSummary\"]",
+    "fallback_label_match": "выписной эпикриз|эпикриз|выписка"
+  },
+  {
+    "target_key": "medical_records",
+    "labels": [
+      "Медицинские записи"
+    ],
+    "screen_id": "inspection",
+    "tab_key": "medicalRecords",
+    "document_type": "readonly-tab",
+    "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"medicalRecords\"]",
+    "fallback_label_match": "медицинские записи|мед записи"
+  },
+  {
+    "target_key": "diagnoses",
+    "labels": [
+      "Диагнозы"
+    ],
+    "screen_id": "inspection",
+    "tab_key": "diagnoses",
+    "document_type": "readonly-tab",
+    "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"diagnoses\"]",
+    "fallback_label_match": "диагнозы|диагноз"
+  },
+  {
+    "target_key": "diaries",
+    "labels": [
+      "Дневниковые записи"
+    ],
+    "screen_id": "inspection",
+    "tab_key": "diaries",
+    "document_type": "readonly-tab",
+    "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"diaries\"]",
+    "fallback_label_match": "дневниковые записи|дневник"
+  },
+  {
+    "target_key": "files",
+    "labels": [
+      "Файлы"
+    ],
+    "screen_id": "inspection",
+    "tab_key": "files",
+    "document_type": "readonly-tab",
+    "preferred_selector": "[data-action=\"switch-tab\"][data-tab=\"files\"]",
+    "fallback_label_match": "файлы|файл"
+  },
+  {
+    "target_key": "schedule",
+    "labels": [
+      "Расписание",
+      "График",
+      "Консультация и диагностика"
+    ],
+    "screen_id": "schedule",
+    "tab_key": "",
+    "document_type": "screen",
+    "preferred_selector": "",
+    "fallback_label_match": "расписание|график|назад"
+  }
+]

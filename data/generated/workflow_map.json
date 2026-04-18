@@ -28,5 +28,17 @@
       "Apply approved patches through DOM engine",
       "Write audit entry"
     ]
+  },
+  {
+    "workflow_id": "voice-navigation-dom-agent",
+    "title": "Voice navigation through Damumed-like DOM",
+    "steps": [
+      "Listen to doctor command",
+      "Resolve navigation intent from source-of-truth targets",
+      "Find visible tab/link/button in DOM context",
+      "Build safe DOM operations without raw JavaScript",
+      "Apply navigation through content script",
+      "Show DOM proof and proactive next-step hint"
+    ]
   }
 ]
