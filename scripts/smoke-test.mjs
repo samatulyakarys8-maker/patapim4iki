@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { buildArtifacts, seedRuntimeState } from '../lib/dataset.mjs';
+import { analyzeAdvisor } from '../lib/advisor.mjs';
 import {
   buildProcedureSchedulePreview,
   getDeepgramRealtimeConfig,
@@ -27,6 +28,8 @@ import {
 
 const artifacts = buildArtifacts();
 const runtime = seedRuntimeState(artifacts);
+const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
+delete process.env.OPENROUTER_API_KEY;
 
 assert.ok(artifacts.screen_inventory.some((screen) => screen.screen_id === 'schedule'));
 assert.ok(artifacts.screen_inventory.some((screen) => screen.screen_id === 'inspection'));
@@ -49,6 +52,26 @@ assert.equal(
   runtime.scheduleDays[0].slots.filter((slot) => slot.patient_id).every((slot) => slot.patient_id === 'patient-1'),
   true
 );
+
+const advisorAppointmentId = Object.keys(runtime.appointments)[0];
+const advisor = await analyzeAdvisor(runtime, {
+  appointmentId: advisorAppointmentId,
+  question: 'Подскажи следующий шаг приема.',
+  screenContext: { screen_id: 'inspection', selected_appointment_id: advisorAppointmentId }
+});
+assert.equal(advisor.provider.type, 'heuristic');
+assert.ok(advisor.answer.next_step);
+assert.ok(Array.isArray(advisor.answer.questions_to_ask));
+assert.ok(advisor.answer.questions_to_ask.length > 0);
+assert.ok(Array.isArray(advisor.answer.differential_hypotheses));
+assert.ok(advisor.answer.differential_hypotheses.length > 0);
+const advisorAnswerText = JSON.stringify(advisor.answer).toLowerCase();
+assert.equal(advisorAnswerText.includes('domoperations'), false);
+assert.equal(advisorAnswerText.includes('selector'), false);
+assert.equal(advisorAnswerText.includes('screen_id'), false);
+if (originalOpenRouterKey) {
+  process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
+}
 
 const workingDays = generateNext9WorkingDays('2026-04-17');
 assert.equal(workingDays.length, 9);

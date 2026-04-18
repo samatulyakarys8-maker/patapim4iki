@@ -3,52 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Damumed Agent</title>
+    <title>Damumed Assistant</title>
     <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
     <main class="panel">
-      <section class="block">
-        <h1>Damumed Agent</h1>
-        <p>Работает только поверх песочницы на `http://localhost:3030`.</p>
-        <div id="globalStatus" class="status-note">Нажмите “Начать режим работы” и говорите команду врачу.</div>
-        <button id="refreshContext" class="ghost-button">Проверить DOM-связь</button>
-        <pre id="screenContext" class="code"></pre>
-      </section>
-
-      <section class="block">
-        <h2>Голосовой агент</h2>
-        <p class="hint">Говорите без ручного ввода: “Открой первичный прием Иванова”, “Перейди к выписному эпикризу”, “Открой медицинские записи”.</p>
-        <div class="row wrap">
-          <button id="startRecording" class="button" type="button">Начать режим работы</button>
-          <button id="stopRecording" class="ghost-button" type="button" disabled>Остановить агента</button>
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">AI assistant</p>
+          <h1>Damumed Assistant</h1>
+          <p id="globalStatus" class="subtitle">Откройте форму приема пациента.</p>
         </div>
-        <div id="recordingState" class="status-note">Запись не запущена.</div>
-        <div class="speaker-panel">
-          <strong>Режим Патапима</strong>
-          <p class="hint">Скажите: “режим доктора Патапима”, затем пациент говорит: “я пациент”. Агент закрепит роли голосов.</p>
-          <pre id="speakerOutput" class="code compact-code"></pre>
+        <button id="themeToggle" class="icon-button" type="button" aria-label="Переключить тему">Темная</button>
+      </header>
+
+      <section id="chatTimeline" class="chat-timeline" aria-live="polite"></section>
+
+      <section class="quick-actions" aria-label="Действия формы">
+        <button id="applyPreview" class="primary-button" type="button">Применить в форму</button>
+        <button id="saveInspection" class="ghost-button" type="button">Сохранить</button>
+        <button id="saveCloseInspection" class="ghost-button" type="button">Сохранить и закрыть</button>
+      </section>
+
+      <form id="composer" class="composer">
+        <textarea id="chatInput" placeholder="Вставьте текст приема или задайте вопрос советчику."></textarea>
+
+        <div class="composer-toolbar">
+          <div class="left-tools">
+            <div class="tools-wrap">
+              <button id="toolsToggle" class="control-button plus-button" type="button" aria-label="Открыть меню" aria-expanded="false">+</button>
+              <div id="toolsMenu" class="tools-menu" hidden>
+                <button id="toggleAdvisorMode" class="menu-item" type="button">Включить режим советчика</button>
+                <button id="clearChat" class="menu-item danger" type="button">Очистить чат</button>
+                <label class="menu-label" for="speakerTag">Кто говорит</label>
+                <select id="speakerTag" class="menu-select" aria-label="Кто говорит">
+                  <option value="auto">Определить автоматически</option>
+                  <option value="doctor">Врач</option>
+                  <option value="caregiver">Родитель</option>
+                  <option value="patient">Пациент</option>
+                  <option value="unknown">Неизвестно</option>
+                </select>
+                <button id="refreshContext" class="menu-item" type="button">Обновить контекст</button>
+                <button id="loadDraft" class="menu-item" type="button">Показать предложения</button>
+                <button id="exampleDoctor" class="menu-item" type="button">Пример врача</button>
+                <button id="exampleCaregiver" class="menu-item" type="button">Пример родителя</button>
+              </div>
+            </div>
+
+            <button id="advisorModePill" class="mode-pill" type="button" aria-pressed="false">
+              <span id="advisorIndicator" class="status-dot" hidden></span>
+              Режим советчика
+              <span class="chevron">⌄</span>
+            </button>
+          </div>
+
+          <div class="right-tools">
+            <button id="voiceToggle" class="icon-control" type="button" aria-label="Запустить запись" title="Запись">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path>
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
+                <path d="M12 18v3"></path>
+                <path d="M8 21h8"></path>
+              </svg>
+            </button>
+            <button id="sendMessage" class="send-button" type="submit" aria-label="Отправить">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 19V5"></path>
+                <path d="m5 12 7-7 7 7"></path>
+              </svg>
+            </button>
+          </div>
         </div>
-        <h3>Последняя распознанная команда</h3>
-        <pre id="transcriptOutput" class="code"></pre>
-      </section>
-
-      <section class="block">
-        <h2>Результат выполнения</h2>
-        <pre id="intentOutput" class="code"></pre>
-        <pre id="actionOutput" class="code"></pre>
-      </section>
-
-      <section class="block">
-        <h2>DOM-действия</h2>
-        <p class="hint">Proof для судей: selector, операция, результат и причина.</p>
-        <pre id="domProofOutput" class="code"></pre>
-      </section>
-
-      <section class="block">
-        <h2>Подсказки следующего шага</h2>
-        <pre id="hintsOutput" class="code"></pre>
-      </section>
+      </form>
     </main>
     <script type="module" src="sidepanel.js"></script>
   </body>

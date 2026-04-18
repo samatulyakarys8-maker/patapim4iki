@@ -414,6 +414,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message.type === 'advisor-analyze') {
+      const screenContext = await getScreenContext(tab.id);
+      if (screenContext.screen_id !== 'inspection') {
+        throw new Error('Откройте форму приема пациента, чтобы советчик видел текущий контекст.');
+      }
+      const payload = await postJson('/api/advisor/analyze', {
+        appointmentId: screenContext.selected_appointment_id,
+        question: message.question,
+        screenContext
+      });
+      sendResponse({ ok: true, screenContext, ...payload });
+      return;
+    }
+
     if (message.type === 'procedure-schedule-preview') {
       const screenContext = await getScreenContext(tab.id);
       if (!screenContext.selected_appointment_id) {

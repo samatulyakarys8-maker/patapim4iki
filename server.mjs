@@ -25,6 +25,7 @@ import {
   stopSpeechSession,
   searchPatients
 } from './lib/agent.mjs';
+import { analyzeAdvisor } from './lib/advisor.mjs';
 import { buildPsychologistsFromRuntime, generatePsychologistSchedule } from './lib/scheduler.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -601,6 +602,28 @@ async function handleApi(req, res, url) {
     }));
     await persistRuntime();
     return sendJson(res, 200, preview);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/advisor/analyze') {
+    const body = await readBody(req);
+    const advisor = await analyzeAdvisor(runtime, {
+      appointmentId: body.appointmentId,
+      question: body.question,
+      screenContext: body.screenContext || {}
+    });
+    addAudit(createAuditEntry({
+      actorType: 'advisor',
+      actionType: 'advisor_analyze',
+      screenId: inferScreenId(body.screenContext || {}),
+      entityRefs: {
+        appointment_id: body.appointmentId || body.screenContext?.selected_appointment_id || null,
+        patient_id: body.screenContext?.selected_patient_id || null
+      },
+      payload: { question: body.question || '' },
+      result: advisor.provider?.type || 'unknown'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true, ...advisor });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/transcripts/ingest') {

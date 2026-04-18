@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Damumed External Agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "External AI agent for the Damumed sandbox phase 1 demo",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel"],
   "host_permissions": ["http://localhost:3030/*", "http://127.0.0.1:3030/*", "https://api.elevenlabs.io/*", "https://api.deepgram.com/*"],
