@@ -1013,6 +1013,15 @@ async function loadDraft({ silent = false } = {}) {
     await loadWorkspaceData({ screenContext: result.screenContext, silent: true });
     state.latestSuggestions = result.draftState?.draft_patches || [];
     const cards = suggestionCards(state.latestSuggestions);
+    const hints = result.preview?.hints || [];
+    if (hints.length > 0) {
+      appendMessage({
+        role: 'system',
+        title: 'Подсказки',
+        body: 'Система предлагает следующие действия или подсказки:',
+        cards: hints.map(h => ({title: 'Совет', text: h.message}))
+      });
+    }
     if (!silent || cards.length) {
       appendMessage({
         role: 'assistant',
@@ -1183,6 +1192,15 @@ async function handleVoiceCommand(text, { fromRecording = false, sttConfidence =
   if (result.screenContext) {
     state.latestScreenContext = result.screenContext;
   }
+  const hints = result.observation?.preview?.hints || result.preview?.hints || [];
+  if (hints.length > 0) {
+    appendMessage({
+      role: 'system',
+      title: 'Подсказки',
+      body: 'Система предлагает следующие действия или подсказки:',
+      cards: hints.map(h => ({title: 'Совет', text: h.message}))
+    });
+  }
   setStatus('Голосовая команда выполнена.');
   return result;
 }
@@ -1218,6 +1236,15 @@ async function ingestTranscript(textOverride = null, { fromRecording = false } =
     if (!result.ok) throw new Error(result.error || 'Не удалось обработать текст приема.');
 
     const chunk = result.transcript?.chunk;
+    const hints = result.transcript?.hints || result.preview?.hints || [];
+    if (hints.length > 0) {
+      appendMessage({
+        role: 'system',
+        title: 'Подсказки',
+        body: 'Система предлагает следующие действия или подсказки:',
+        cards: hints.map(h => ({title: 'Совет', text: h.message}))
+      });
+    }
     appendMessage({
       role: 'assistant',
       title: 'Я услышал',

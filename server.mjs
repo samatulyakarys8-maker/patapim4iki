@@ -264,19 +264,19 @@ async function persistRuntime() {
 }
 
 const KNOWN_PATIENT_NAME_FIXES = {
-  'patient-history-1': 'Абай Амина',
+  'patient-history-1': 'Рахметолла Айкунім',
   'patient-history-2': 'Ахмедияр Іңкәр',
   'patient-history-3': 'Нұрбөлекұлы Нұрәли',
   'patient-history-4': 'Темірбай Айбат',
   'patient-history-5': 'Базархан Мирас',
   'patient-history-6': 'Қарақойшин Амре',
-  'ARCH-001': 'Абай Амина',
+  'ARCH-001': 'Рахметолла Айкунім',
   'ARCH-002': 'Ахмедияр Іңкәр',
   'ARCH-003': 'Нұрбөлекұлы Нұрәли',
   'ARCH-004': 'Темірбай Айбат',
   'ARCH-005': 'Базархан Мирас',
   'ARCH-006': 'Қарақойшин Амре',
-  'history-1': 'Абай Амина',
+  'history-1': 'Рахметолла Айкунім',
   'history-2': 'Ахмедияр Іңкәр',
   'history-3': 'Нұрбөлекұлы Нұрәли',
   'history-4': 'Темірбай Айбат',
@@ -738,25 +738,21 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/psychologist-schedule/generate') {
     const body = await readBody(req);
     const patient = getPatientById(runtime, body.patientId) || getSchedulerPatientById(runtime, body.patientId);
-    const sessionCount = Number(body.sessionCount || 9);
+    const durationMin = Number(body.durationMin || 30);
 
     if (!patient) {
       return sendJson(res, 404, { error: 'Patient not found.' });
     }
 
-    if (!Number.isInteger(sessionCount) || sessionCount < 1 || sessionCount > 9) {
-      return sendJson(res, 400, { error: 'sessionCount must be an integer from 1 to 9.' });
-    }
-
-    if (body.durationMin != null && Number(body.durationMin) !== 30) {
-      return sendJson(res, 400, { error: 'Psychologist sessions currently support fixed 30-minute slots only.' });
+    if (![30, 40].includes(durationMin)) {
+      return sendJson(res, 400, { error: 'durationMin must be 30 or 40.' });
     }
 
     const generated = generatePsychologistSchedule({
       patient,
       psychologists: buildSchedulingPsychologists(runtime),
       startDate: body.startDate || runtime.currentDate,
-      sessionCount
+      durationMin
     });
 
     if (body.apply) {
@@ -766,7 +762,7 @@ async function handleApi(req, res, url) {
         actionType: 'generate_psychologist_schedule',
         screenId: 'board',
         entityRefs: { patient_id: patient.patient_id },
-        payload: { sessionCount, startDate: body.startDate || runtime.currentDate },
+        payload: { sessionCount: 9, durationMin, startDate: body.startDate || runtime.currentDate },
         result: `applied:${appliedSchedule.applied.length}`
       }));
       await persistRuntime();
@@ -1080,6 +1076,8 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && /^\/api\/appointments\//.test(url.pathname) && url.pathname.endsWith('/save')) {
     const appointmentId = url.pathname.split('/')[3];
     const body = await readBody(req);
+    const appointmentBeforeSave = getAppointmentById(runtime, appointmentId);
+    const wasPrimaryVisit = appointmentBeforeSave && appointmentBeforeSave.status === 'scheduled';
     const updated = applyInspectionSave(runtime, appointmentId, body);
     addAudit(createAuditEntry({
       actorType: 'ui',
@@ -1089,8 +1087,44 @@ async function handleApi(req, res, url) {
       payload: body,
       result: 'completed'
     }));
+
+    // Module 3: Smart Scheduling — auto-generate 9-working-day schedule after primary visit
+    let autoScheduleResult = null;
+    if (wasPrimaryVisit && updated.patient_id) {
+      try {
+        const patient = getPatientById(runtime, updated.patient_id) || getSchedulerPatientById(runtime, updated.patient_id);
+        if (patient) {
+          const durationMin = [30, 40].includes(Number(body.duration_min)) ? Number(body.duration_min) : 30;
+          const generated = generatePsychologistSchedule({
+            patient,
+            psychologists: buildSchedulingPsychologists(runtime),
+            startDate: body.execute_date || runtime.currentDate,
+            durationMin
+          });
+          autoScheduleResult = applyGeneratedScheduleToRuntime(generated, patient.patient_id);
+          addAudit(createAuditEntry({
+            actorType: 'ai',
+            actionType: 'auto_generate_psychologist_schedule',
+            screenId: 'inspection',
+            entityRefs: { appointment_id: appointmentId, patient_id: patient.patient_id },
+            payload: { sessionCount: 9, durationMin, startDate: body.execute_date || runtime.currentDate, trigger: 'primary_visit_save' },
+            result: `applied:${autoScheduleResult.applied.length}`
+          }));
+        }
+      } catch (scheduleError) {
+        autoScheduleResult = { error: scheduleError.message || 'Auto-schedule generation failed' };
+      }
+    }
+
     await persistRuntime();
-    return sendJson(res, 200, { appointment: updated, patient: getPatientById(runtime, updated.patient_id) });
+    return sendJson(res, 200, {
+      appointment: updated,
+      patient: getPatientById(runtime, updated.patient_id),
+      autoSchedule: autoScheduleResult,
+      scheduleWindow: autoScheduleResult && !autoScheduleResult.error
+        ? serializeScheduleWindow(runtime.currentDate)
+        : undefined
+    });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/hints') {

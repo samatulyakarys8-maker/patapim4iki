@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   bootstrap: null,
   scheduleDay: null,
   scheduleWindow: [],
@@ -15,7 +15,7 @@
   scheduleGenerator: {
     patients: [],
     patientId: '',
-    sessionCount: 9,
+    durationMin: 30,
     startDate: '',
     result: null,
     loading: false,
@@ -277,6 +277,8 @@ async function loadInspection(appointmentId) {
   state.appointmentBundle = payload;
   state.route = { screen: 'inspection', appointmentId };
   state.activeTab ||= 'inspection';
+  state.scheduleGenerator.result = null;
+  state.scheduleGenerator.error = '';
   await loadHints('inspection', appointmentId);
   render();
 }
@@ -323,25 +325,66 @@ async function generatePsychologistScheduleRequest() {
   render();
 
   try {
+    const applyMode = state.route.screen === 'board' || state.route.screen === 'inspection';
     state.scheduleGenerator.result = await api('/api/psychologist-schedule/generate', {
       method: 'POST',
       body: JSON.stringify({
         patientId: state.scheduleGenerator.patientId,
-        sessionCount: Number(state.scheduleGenerator.sessionCount),
+        durationMin: Number(state.scheduleGenerator.durationMin),
         startDate: state.scheduleGenerator.startDate || state.scheduleDay?.date || state.bootstrap?.currentDate,
-        apply: state.route.screen === 'board'
+        apply: applyMode
       })
     });
 
-    if (state.route.screen === 'board') {
+    if (applyMode) {
       const firstAppliedDate = state.scheduleGenerator.result?.applied?.[0]?.date;
       const nextDate = firstAppliedDate || state.scheduleDay?.date || state.bootstrap?.currentDate;
       state.scheduleWindow = state.scheduleGenerator.result?.scheduleWindow || state.scheduleWindow;
       await refreshAudit();
-      await loadSchedule(nextDate, state.statusFilter);
+      if (state.route.screen === 'board') {
+        await loadSchedule(nextDate, state.statusFilter);
+      }
     }
   } catch (error) {
     state.scheduleGenerator.error = error.message || 'Failed to generate schedule.';
+  } finally {
+    state.scheduleGenerator.loading = false;
+    render();
+  }
+}
+
+async function generateScheduleForCurrentPatient() {
+  const patientId = state.appointmentBundle?.patient?.patient_id;
+  if (!patientId) {
+    state.toast = 'Пациент не определен. Откройте приём.';
+    render();
+    return;
+  }
+  const durationMin = Number(document.querySelector('#ntbDurationMinute')?.value || 30);
+  const startDate = document.querySelector('#dtpServiceExecuteDate')?.value || state.scheduleDay?.date || state.bootstrap?.currentDate;
+
+  state.scheduleGenerator.loading = true;
+  state.scheduleGenerator.error = '';
+  state.toast = 'ИИ формирует расписание на 9 рабочих дней...';
+  render();
+
+  try {
+    const result = await api('/api/psychologist-schedule/generate', {
+      method: 'POST',
+      body: JSON.stringify({
+        patientId,
+        durationMin: [30, 40].includes(durationMin) ? durationMin : 30,
+        startDate,
+        apply: true
+      })
+    });
+    state.scheduleGenerator.result = result;
+    state.scheduleWindow = result?.scheduleWindow || state.scheduleWindow;
+    state.toast = `Расписание сформировано: ${result?.applied?.length || 0} занятий назначено на 9 рабочих дней для ${formatPersonName(state.appointmentBundle?.patient?.full_name || '')}.`;
+    await refreshAudit();
+  } catch (error) {
+    state.scheduleGenerator.error = error.message || 'Ошибка генерации расписания.';
+    state.toast = 'Ошибка генерации расписания: ' + (error.message || '');
   } finally {
     state.scheduleGenerator.loading = false;
     render();
@@ -426,8 +469,19 @@ async function saveInspection(closeAfter) {
     method: 'POST',
     body: JSON.stringify(payload)
   });
-  state.toast = 'Запись сохранена. Статус обновлен на «Выполнено».';
   await refreshAudit();
+
+  // Module 3: Smart Scheduling — server auto-generates schedule on primary visit
+  if (response.autoSchedule && !response.autoSchedule.error) {
+    state.scheduleGenerator.result = response.autoSchedule;
+    state.scheduleWindow = response.scheduleWindow || state.scheduleWindow;
+    state.toast = `Запись сохранена. ИИ автоматически сформировал расписание на 9 рабочих дней (${response.autoSchedule.applied?.length || 0} занятий назначено).`;
+  } else if (response.autoSchedule?.error) {
+    state.toast = 'Запись сохранена, но авто-расписание не удалось: ' + response.autoSchedule.error;
+  } else {
+    state.toast = 'Запись сохранена. Статус обновлен на «Выполнено».';
+  }
+
   if (closeAfter) {
     window.location.hash = '#/schedule';
     await loadSchedule(response.appointment.inspection_draft.execute_date, state.statusFilter);
@@ -495,12 +549,15 @@ function renderPsychologistSchedulePanel(mode = 'preview') {
           </select>
         </div>
         <div class="field-group">
-          <label for="schedule-generator-session-count">\u0417\u0430\u043d\u044f\u0442\u0438\u0439</label>
-          <input id="schedule-generator-session-count" type="number" min="1" max="9" value="${escapeHtml(generator.sessionCount)}" />
+          <label>\u0417\u0430\u043d\u044f\u0442\u0438\u0439</label>
+          <div class="scheduler-fixed-value">9 (\u0440\u0430\u0431\u043e\u0447\u0438\u0445 \u0434\u043d\u0435\u0439)</div>
         </div>
         <div class="field-group">
-          <label>\u0414\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c</label>
-          <div class="scheduler-fixed-value">30 \u043c\u0438\u043d\u0443\u0442</div>
+          <label for="schedule-generator-duration">\u0414\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c</label>
+          <select id="schedule-generator-duration">
+            <option value="30" ${generator.durationMin === 30 ? 'selected' : ''}>30 \u043c\u0438\u043d\u0443\u0442</option>
+            <option value="40" ${generator.durationMin === 40 ? 'selected' : ''}>40 \u043c\u0438\u043d\u0443\u0442</option>
+          </select>
         </div>
       </div>
       ${generator.error ? `<div class="scheduler-error">${escapeHtml(generator.error)}</div>` : ''}
@@ -801,8 +858,18 @@ function renderInspection() {
         <div class="inline-actions" style="margin-top: 16px;">
           <button id="btnSaveInspectionResult" type="button" class="button" data-action="save-inspection">Сохранить</button>
           <button id="btnSaveAndCloseInspectionResult" type="button" class="secondary-button" data-action="save-close-inspection">Сохранить и закрыть</button>
+          <button id="btnGenerateScheduleFromInspection" type="button" class="secondary-button" data-action="generate-schedule-from-inspection" style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border: none;">
+            \u{1F4C5} Сформировать расписание (9 дней)
+          </button>
           <button type="button" class="ghost-button" data-action="go-schedule">Назад</button>
         </div>
+        ${state.scheduleGenerator.result && state.route.screen === 'inspection' ? `
+          <div class="scheduler-results" style="margin-top: 16px;">
+            <h4>\u{1F4CB} Сформированное расписание</h4>
+            ${renderGeneratedPsychologistSchedule(state.scheduleGenerator.result)}
+          </div>
+        ` : ''}
+        ${state.scheduleGenerator.error && state.route.screen === 'inspection' ? `<div class="scheduler-error" style="margin-top: 8px;">${escapeHtml(state.scheduleGenerator.error)}</div>` : ''}
       </form>
     `,
     assignments: renderReadonlyTab('Назначения', readonly.assignments, (item) => `<p><strong>${escapeHtml(item.title)}</strong><br /><span class="muted">Статус: ${escapeHtml(item.status)}</span></p>`),
@@ -854,29 +921,26 @@ function renderAdvisorQuestionOverlay() {
 }
 
 function renderHints() {
-  const scheduleGuide = state.route.screen === 'schedule' || state.route.screen === 'board'
-    ? `
-      <div class="hint-card">
-        <p><strong>${state.route.screen === 'board' ? '\u041a\u0430\u043a \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442 \u0434\u043e\u0441\u043a\u0430' : '\u0427\u0442\u043e \u0437\u0434\u0435\u0441\u044c \u0437\u0430 \u0447\u0442\u043e \u043e\u0442\u0432\u0435\u0447\u0430\u0435\u0442'}</strong></p>
-        <p>\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e \u2014 \u043e\u043a\u043d\u043e \u0431\u0435\u0437 \u0437\u0430\u043f\u0438\u0441\u0430\u043d\u043d\u043e\u0433\u043e \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430.</p>
-        <p>\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0451\u043c \u0443\u0436\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d, \u0438 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043c\u043e\u0436\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u044c.</p>
-        <p>\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0451\u043c \u0443\u0436\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d, \u0438 \u0437\u0430\u043f\u0438\u0441\u044c \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0430.</p>
-        <p>\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430 \u2014 \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u043e\u0432 \u0438\u043c\u0435\u043d\u043d\u043e \u044d\u0442\u043e\u0433\u043e \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430.</p>
-        ${state.route.screen === 'board' ? '<p>\u041b\u044e\u0431\u043e\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0437\u0434\u0435\u0441\u044c \u0441\u0440\u0430\u0437\u0443 \u043c\u0435\u043d\u044f\u0435\u0442 \u0438 \u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0435 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435, \u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f \u043e\u0434\u0438\u043d \u0438 \u0442\u043e\u0442 \u0436\u0435 runtime.</p>' : ''}
-      </div>
-    `
-    : '';
+  if (!state.hints || state.hints.length === 0) {
+    return `
+      <section class="card">
+        <h3 class="panel-title">\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438</h3>
+        <ul class="hint-list">
+          <li class="hint-card"><p>\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0445 \u043f\u043e\u0434\u0441\u043a\u0430\u0437\u043e\u043a \u043f\u043e\u043a\u0430 \u043d\u0435\u0442.</p></li>
+        </ul>
+      </section>
+    `;
+  }
 
   return `
     <section class="card">
-      <h3 class="panel-title">${state.route.screen === 'schedule' || state.route.screen === 'board' ? '\u041a\u0430\u043a \u0447\u0438\u0442\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435' : '\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438'}</h3>
-      ${scheduleGuide}
+      <h3 class="panel-title">\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438</h3>
       <ul class="hint-list">
         ${state.hints.map((hint) => `
           <li class="hint-card">
             <p>${escapeHtml(hint.message)}</p>
           </li>
-        `).join('') || '<li class="hint-card"><p>\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0445 \u043f\u043e\u0434\u0441\u043a\u0430\u0437\u043e\u043a \u043f\u043e\u043a\u0430 \u043d\u0435\u0442.</p></li>'}
+        `).join('')}
       </ul>
     </section>
   `;
@@ -935,9 +999,6 @@ function render() {
         ${renderPageHeader()}
         ${state.route.screen === 'inspection' ? renderInspection() : state.route.screen === 'board' ? renderBoard() : renderSchedule()}
       </main>
-      <aside class="side-panel">
-        ${renderHints()}
-      </aside>
       ${renderPatientModal()}
       ${renderToast()}
     </div>
@@ -996,6 +1057,9 @@ document.addEventListener('click', async (event) => {
   }
   if (action === 'generate-psychologist-schedule') {
     await generatePsychologistScheduleRequest();
+  }
+  if (action === 'generate-schedule-from-inspection') {
+    await generateScheduleForCurrentPatient();
   }
   if (action === 'select-schedule-day') {
     const nextDate = target.dataset.date;
@@ -1065,6 +1129,10 @@ document.addEventListener('change', async (event) => {
     state.scheduleGenerator.patientId = target.value;
     render();
   }
+  if (target.id === 'schedule-generator-duration') {
+    state.scheduleGenerator.durationMin = Number(target.value);
+    render();
+  }
 });
 
 document.addEventListener('input', async (event) => {
@@ -1073,13 +1141,7 @@ document.addEventListener('input', async (event) => {
     state.patientModal.query = target.value;
     await searchModalPatients(target.value);
   }
-  if (target.id === 'schedule-generator-session-count') {
-    const nextValue = Number(target.value || 1);
-    state.scheduleGenerator.sessionCount = Math.max(1, Math.min(9, nextValue));
-    if (String(state.scheduleGenerator.sessionCount) !== target.value) {
-      target.value = state.scheduleGenerator.sessionCount;
-    }
-  }
+
 });
 
 bootstrap().then(clearToastSoon).catch((error) => {

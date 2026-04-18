@@ -253,17 +253,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           };
           auditResult = 'appointment_not_open';
         } else {
-          const draftPayload = await postJson('/api/procedure-schedule/preview', {
-            appointmentId: screenContext.selected_appointment_id
+          domExecution = await askContent(tab.id, {
+            type: 'apply-preview',
+            domOperations: [{ type: 'click', selector: '#btnGenerateScheduleFromInspection' }]
           });
-          domExecution = {
-            ok: true,
-            mode: 'backend-action',
-            action: 'procedure_schedule_preview',
-            draft: draftPayload.draft,
-            verification: { ok: true, reason: 'procedure_schedule_preview_created' }
-          };
-          auditResult = 'executed';
+          auditResult = domExecution.ok ? 'executed' : 'execution_failed';
         }
       } else if (commandResult.needsLlmFallback && !(actionPlan?.operations || []).length) {
         domExecution = {

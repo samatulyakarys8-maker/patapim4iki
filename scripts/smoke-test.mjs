@@ -81,7 +81,7 @@ assert.equal(
   runtime.patients.some((patient) => runtime.providers.some((provider) => provider.full_name === patient.full_name)),
   false
 );
-assert.ok(runtime.patients.slice(1).every((patient) => patient.iin_or_local_id.startsWith('ARCH-')));
+assert.ok(runtime.patients.slice(1).every((patient) => /^\d+$/.test(patient.iin_or_local_id)));
 assert.ok(runtime.scheduleDays[0].slots.some((slot) => slot.status === 'available'));
 assert.ok(runtime.scheduleDays[0].slots.filter((slot) => slot.patient_id).length >= 1);
 assert.equal(runtime.scheduleDays[0].slots.length, runtime.providers.length * 16);
@@ -294,10 +294,10 @@ assert.equal(generated.patientId, patient.patient_id);
 assert.equal(generated.days.length, 9);
 assert.equal(generated.unassigned.length, 0);
 assert.ok(generated.days.every((day) => day.appointments.length <= 1));
-assert.deepEqual(
-  generated.days.map((day) => day.date),
-  calendarDays
-);
+assert.ok(generated.days.every((day) => {
+  const d = new Date(`${day.date}T00:00:00Z`);
+  return d.getUTCDay() !== 0 && d.getUTCDay() !== 6;
+}));
 
 for (const day of generated.days) {
   for (const appointment of day.appointments) {
@@ -317,22 +317,29 @@ assert.equal(psy1Slots.some((slot) => slot.start === '10:30'), true);
 const distributed = generatePsychologistSchedule({
   patient,
   psychologists,
-  startDate: '2026-04-18',
-  sessionCount: 5
+  startDate: '2026-04-18'
 });
-assert.equal(distributed.days.length, 5);
+assert.equal(distributed.days.length, 9);
 assert.ok(distributed.days[0].date < distributed.days[distributed.days.length - 1].date);
 assert.ok(distributed.days.some((day) => day.date >= '2026-04-24'));
+
+const duration40 = generatePsychologistSchedule({
+  patient,
+  psychologists,
+  startDate: '2026-04-18',
+  durationMin: 40
+});
+assert.equal(duration40.days.length, 9);
+assert.ok(duration40.days.every((day) => day.appointments[0].durationMin === 40));
 
 assert.throws(
   () => generatePsychologistSchedule({
     patient,
     psychologists,
     startDate: '2026-04-18',
-    sessionCount: 3,
-    durationMin: 40
+    durationMin: 45
   }),
-  /fixed 30-minute slots only/i
+  /30 or 40/i
 );
 
 const blockedPsychologists = [1, 2, 3].map((index) => ({
@@ -342,7 +349,7 @@ const blockedPsychologists = [1, 2, 3].map((index) => ({
   work_end: '18:00',
   lunch_start: '13:00',
   lunch_end: '14:00',
-  busy_slots: calendarDays.flatMap((date) => [
+  busy_slots: generateNext9WorkingDays('2026-04-18').flatMap((date) => [
     { date, start: '09:00', end: '13:00' },
     { date, start: '14:00', end: '18:00' }
   ])
@@ -351,11 +358,10 @@ const blockedPsychologists = [1, 2, 3].map((index) => ({
 const unassigned = generatePsychologistSchedule({
   patient,
   psychologists: blockedPsychologists,
-  startDate: '2026-04-18',
-  sessionCount: 4
+  startDate: '2026-04-18'
 });
 assert.equal(unassigned.days.length, 0);
-assert.equal(unassigned.unassigned.length, 4);
+assert.equal(unassigned.unassigned.length, 9);
 assert.ok(unassigned.unassigned.every((item) => item.reason));
 
 const firstSlot = runtime.scheduleDays[0].slots.find((slot) => slot.patient_id);
@@ -467,7 +473,7 @@ assert.ok(patientMatch.candidates[0].score >= 0.72);
 assert.equal(resolvePatientQuery('temirbay', runtime.patients).matchedPatient.patient_id, 'patient-history-4');
 assert.equal(resolvePatientQuery('рахметула айкуным', runtime.patients).matchedPatient.patient_id, 'patient-1');
 assert.equal(resolvePatientQuery('анкар', runtime.patients).matchedPatient.patient_id, 'patient-history-2');
-assert.equal(resolvePatientQuery('абаямина', runtime.patients).matchedPatient.full_name, 'Абай Амина');
+assert.equal(resolvePatientQuery('рахметолла', runtime.patients).matchedPatient.full_name, 'РАХМЕТОЛЛА АЙКҮНІМ ХАБИДОЛЛАҚЫЗЫ');
 assert.equal(resolvePatientQuery('пациента', runtime.patients).status, 'not_found');
 assert.equal(parseVoiceCommand('otkroi nurzhan').intent, 'open_patient');
 assert.equal(parseVoiceCommand('otkroi nurzhan').patientQuery, 'нуржан');
