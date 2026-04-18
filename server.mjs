@@ -362,6 +362,7 @@ async function handleApi(req, res, url) {
     const patient = getPatientById(runtime, body.patient_id);
     if (!slot || !patient) return notFound(res);
     slot.patient_id = patient.patient_id;
+    slot.status = 'scheduled';
     const appointment = runtime.appointments[slot.appointment_id];
     resetAppointmentMedicalState(appointment, patient);
     appointment.readonly_tabs = {
@@ -378,6 +379,56 @@ async function handleApi(req, res, url) {
     }));
     await persistRuntime();
     return sendJson(res, 200, { appointment, patient });
+  }
+
+  if (req.method === 'POST' && /^\/api\/slots\//.test(url.pathname) && url.pathname.endsWith('/unassign')) {
+    const slotId = url.pathname.split('/')[3];
+    const targetDay = runtime.scheduleDays.find((day) => day.slots.some((slot) => slot.slot_id === slotId));
+    const slot = targetDay?.slots.find((item) => item.slot_id === slotId);
+    if (!slot) return notFound(res);
+    slot.patient_id = null;
+    slot.status = 'available';
+    const appointment = runtime.appointments[slot.appointment_id];
+    appointment.patient_id = null;
+    appointment.status = 'available';
+    appointment.executed_at = null;
+    appointment.inspection_draft = {
+      ...appointment.inspection_draft,
+      conclusion_text: '',
+      medical_record_sections: appointment.inspection_draft.medical_record_sections.map((section) => ({
+        ...section,
+        text: '',
+        options: (section.options || []).map((option) => ({ ...option, selected: false }))
+      })),
+      supplemental: {
+        ...appointment.inspection_draft.supplemental,
+        work_plan: '',
+        planned_sessions: '',
+        completed_sessions: '',
+        dynamics: '',
+        recommendations: ''
+      }
+    };
+    appointment.draft_state = {
+      appointment_id: appointment.appointment_id,
+      draft_status: 'idle',
+      transcript_chunks: [],
+      fact_candidates: [],
+      draft_patches: [],
+      applied_patch_ids: [],
+      updated_at: null,
+      last_preview: null
+    };
+    addAudit(createAuditEntry({
+      actorType: 'user',
+      actionType: 'unassign_patient_from_slot',
+      screenId: 'schedule',
+      entityRefs: { slot_id: slot.slot_id, appointment_id: appointment.appointment_id },
+      payload: { slot_id: slot.slot_id },
+      result: 'unassigned'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { appointment, slot });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/speech/session/start') {

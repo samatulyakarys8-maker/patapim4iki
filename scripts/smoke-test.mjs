@@ -52,6 +52,11 @@ assert.equal(
   runtime.scheduleDays[0].slots.filter((slot) => slot.patient_id).every((slot) => slot.patient_id === 'patient-1'),
   true
 );
+assert.equal(runtime.scheduleDays[0].slots.length, runtime.providers.length * 4);
+assert.deepEqual(
+  [...new Set(runtime.scheduleDays[0].slots.map((slot) => slot.provider_id))].sort(),
+  runtime.providers.map((provider) => provider.provider_id).sort()
+);
 
 const advisorAppointmentId = Object.keys(runtime.appointments)[0];
 const advisor = await analyzeAdvisor(runtime, {

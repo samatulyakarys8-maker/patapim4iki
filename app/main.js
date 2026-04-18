@@ -1,10 +1,11 @@
-const state = {
+﻿const state = {
   bootstrap: null,
   scheduleDay: null,
   appointmentBundle: null,
   hints: [],
   auditEntries: [],
   route: { screen: 'schedule', appointmentId: null },
+  providerId: '',
   patientModal: { open: false, slotId: null, providerId: null, patients: [], query: '', selectedPatientId: null },
   statusFilter: 'all',
   activeTab: 'inspection',
@@ -25,27 +26,27 @@ const app = document.querySelector('#app');
 
 const selectOptions = {
   medicalForms: [
-    { value: 'medical-form-psychology', label: 'Лист психолога' },
-    { value: 'medical-form-rehab', label: 'Реабилитационная форма' }
+    { value: 'medical-form-psychology', label: '\u041b\u0438\u0441\u0442 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430' },
+    { value: 'medical-form-rehab', label: '\u0420\u0435\u0430\u0431\u0438\u043b\u0438\u0442\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f \u0444\u043e\u0440\u043c\u0430' }
   ],
   serviceClassifier: [
-    { value: 'A02.005.000', label: '(A02.005.000) Консультация: Психолог' }
+    { value: 'A02.005.000', label: '(A02.005.000) \u041a\u043e\u043d\u0441\u0443\u043b\u044c\u0442\u0430\u0446\u0438\u044f: \u041f\u0441\u0438\u0445\u043e\u043b\u043e\u0433' }
   ],
   servicePrice: [
-    { value: 'A02.005.000-price', label: '(A02.005.000) Консультация: Психолог' }
+    { value: 'A02.005.000-price', label: '(A02.005.000) \u041a\u043e\u043d\u0441\u0443\u043b\u044c\u0442\u0430\u0446\u0438\u044f: \u041f\u0441\u0438\u0445\u043e\u043b\u043e\u0433' }
   ],
   medicalPost: [
-    { value: 'med-post-psychology', label: 'Пост психолога' }
+    { value: 'med-post-psychology', label: '\u041f\u043e\u0441\u0442 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430' }
   ],
   equipment: [
-    { value: '', label: 'Не выбрано' },
-    { value: 'sensory-room', label: 'Сенсорная комната' },
-    { value: 'speech-tools', label: 'Логопедический набор' }
+    { value: '', label: '\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e' },
+    { value: 'sensory-room', label: '\u0421\u0435\u043d\u0441\u043e\u0440\u043d\u0430\u044f \u043a\u043e\u043c\u043d\u0430\u0442\u0430' },
+    { value: 'speech-tools', label: '\u041b\u043e\u0433\u043e\u043f\u0435\u0434\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u043d\u0430\u0431\u043e\u0440' }
   ],
   statusFilter: [
-    { value: 'all', label: 'Все' },
-    { value: 'scheduled', label: 'Назначенные' },
-    { value: 'completed', label: 'Выполненные' }
+    { value: 'all', label: '\u0412\u0441\u0435' },
+    { value: 'scheduled', label: '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043d\u044b\u0435' },
+    { value: 'completed', label: '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043d\u044b\u0435' }
   ]
 };
 
@@ -59,7 +60,7 @@ function escapeHtml(value) {
 }
 
 function formatSpecialtyTrack(value) {
-  if (value === 'psychology-rehabilitation') return 'Психолог';
+  if (value === 'psychology-rehabilitation') return '\u041f\u0441\u0438\u0445\u043e\u043b\u043e\u0433';
   return value || '';
 }
 
@@ -94,6 +95,9 @@ function routeFromHash() {
   if (parts[0] === 'inspection' && parts[1]) {
     return { screen: 'inspection', appointmentId: parts[1] };
   }
+  if (parts[0] === 'board') {
+    return { screen: 'board', appointmentId: null };
+  }
   return { screen: 'schedule', appointmentId: null };
 }
 
@@ -102,6 +106,7 @@ async function bootstrap() {
   const payload = await api('/api/bootstrap');
   state.bootstrap = payload;
   state.scheduleDay = payload.scheduleDay;
+  state.providerId = payload.providers?.[0]?.provider_id || '';
   state.sourceOfTruth = payload.sourceOfTruth;
   state.scheduleGenerator.startDate = payload.scheduleDay?.date || payload.currentDate || '';
   await loadScheduleGeneratorPatients(payload.patients || []);
@@ -123,7 +128,9 @@ async function loadSchedule(date = state.scheduleDay?.date || state.bootstrap?.c
   const payload = await api(`/api/schedule?date=${encodeURIComponent(date)}&status=${encodeURIComponent(status)}`);
   state.scheduleDay = payload;
   state.scheduleGenerator.startDate = payload.date;
-  state.route = { screen: 'schedule', appointmentId: null };
+  if (state.route.screen !== 'board') {
+    state.route = { screen: 'schedule', appointmentId: null };
+  }
   state.activeTab = 'inspection';
   await loadHints('schedule', null);
   render();
@@ -216,9 +223,22 @@ async function assignPatientToSlot() {
     body: JSON.stringify({ patient_id: state.patientModal.selectedPatientId })
   });
   state.patientModal.open = false;
-  state.toast = `Пациент ${formatPersonName(payload.patient.full_name)} назначен на слот.`;
+  state.toast = `РџР°С†РёРµРЅС‚ ${formatPersonName(payload.patient.full_name)} РЅР°Р·РЅР°С‡РµРЅ РЅР° СЃР»РѕС‚.`;
   await refreshAudit();
+  if (state.route.screen === 'board') {
+    await loadSchedule(state.scheduleDay.date, state.statusFilter);
+    return;
+  }
   await loadInspection(payload.appointment.appointment_id);
+}
+
+async function unassignPatientFromSlot(slotId) {
+  await api(`/api/slots/${slotId}/unassign`, {
+    method: 'POST'
+  });
+  state.toast = 'РџР°С†РёРµРЅС‚ СЃРЅСЏС‚ СЃРѕ СЃР»РѕС‚Р°.';
+  await refreshAudit();
+  await loadSchedule(state.scheduleDay.date, state.statusFilter);
 }
 
 async function saveInspection(closeAfter) {
@@ -263,7 +283,7 @@ async function saveInspection(closeAfter) {
     method: 'POST',
     body: JSON.stringify(payload)
   });
-  state.toast = 'Запись сохранена. Статус обновлен на «Выполнено».';
+  state.toast = 'Р—Р°РїРёСЃСЊ СЃРѕС…СЂР°РЅРµРЅР°. РЎС‚Р°С‚СѓСЃ РѕР±РЅРѕРІР»РµРЅ РЅР° В«Р’С‹РїРѕР»РЅРµРЅРѕВ».';
   await refreshAudit();
   if (closeAfter) {
     window.location.hash = '#/schedule';
@@ -278,12 +298,18 @@ function renderOptionList(options, currentValue) {
 }
 
 function renderPageHeader() {
-  const scheduleTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'schedule')?.title || 'Консультация и диагностика';
-  const inspectionTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'inspection')?.title || 'Назначение';
-  const title = state.route.screen === 'inspection' ? inspectionTitle : scheduleTitle;
+  const scheduleTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'schedule')?.title || '\u0420\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430';
+  const inspectionTitle = state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'inspection')?.title || '\u041f\u0440\u0438\u0451\u043c';
+  const title = state.route.screen === 'inspection'
+    ? inspectionTitle
+    : state.route.screen === 'board'
+      ? '\u0414\u043e\u0441\u043a\u0430 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u043e\u0432'
+      : scheduleTitle;
   const subtitle = state.route.screen === 'inspection'
     ? formatPersonName(state.appointmentBundle?.patient?.full_name || '')
-    : state.bootstrap?.providers?.[0]?.schedule_name || '';
+    : state.route.screen === 'board'
+      ? '\u0412\u0441\u0435 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0438 \u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u044b \u043d\u0430 \u043e\u0434\u043d\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435'
+      : state.bootstrap?.providers?.find((provider) => provider.provider_id === state.providerId)?.schedule_name || state.bootstrap?.providers?.[0]?.schedule_name || '';
   return `
     <section class="card header-bar">
       <div>
@@ -291,9 +317,11 @@ function renderPageHeader() {
         ${subtitle ? `<div class="header-subtitle">${escapeHtml(subtitle)}</div>` : ''}
       </div>
       <div class="meta-list">
+        <button class="ghost-button" data-action="go-schedule">\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0438</button>
+        <button class="ghost-button" data-action="go-board">\u0414\u043e\u0441\u043a\u0430</button>
         <span class="meta-pill">${escapeHtml(state.scheduleDay?.date || state.bootstrap?.currentDate || '')}</span>
         ${state.route.screen === 'inspection' && state.appointmentBundle
-          ? `<span class="status-pill ${escapeHtml(state.appointmentBundle.appointment.status)}">${state.appointmentBundle.appointment.status === 'completed' ? 'Выполнено' : 'Назначено'}</span>`
+          ? `<span class="status-pill ${escapeHtml(state.appointmentBundle.appointment.status)}">${state.appointmentBundle.appointment.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e'}</span>`
           : ''}
       </div>
     </section>
@@ -308,25 +336,24 @@ function renderPsychologistSchedulePanel() {
   return `
     <section class="card scheduler-card">
       <div class="scheduler-header">
-        <div></div>
         <button class="button" data-action="generate-psychologist-schedule" ${generator.loading ? 'disabled' : ''}>
-          ${generator.loading ? 'Формирование...' : 'Сформировать расписание'}
+          ${generator.loading ? '\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435...' : '\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435'}
         </button>
       </div>
       <div class="scheduler-controls">
         <div class="field-group">
-          <label for="schedule-generator-patient">Пациент</label>
+          <label for="schedule-generator-patient">\u041f\u0430\u0446\u0438\u0435\u043d\u0442</label>
           <select id="schedule-generator-patient">
-            ${patients.map((patient) => `<option value="${escapeHtml(patient.patient_id)}" ${patient.patient_id === generator.patientId ? 'selected' : ''}>${escapeHtml(formatPersonName(patient.full_name))}${patient.iin_or_local_id ? ` • ${escapeHtml(patient.iin_or_local_id)}` : ''}</option>`).join('')}
+            ${patients.map((patient) => `<option value="${escapeHtml(patient.patient_id)}" ${patient.patient_id === generator.patientId ? 'selected' : ''}>${escapeHtml(formatPersonName(patient.full_name))}${patient.iin_or_local_id ? ` \u2022 ${escapeHtml(patient.iin_or_local_id)}` : ''}</option>`).join('')}
           </select>
         </div>
         <div class="field-group">
-          <label for="schedule-generator-session-count">Занятий</label>
+          <label for="schedule-generator-session-count">\u0417\u0430\u043d\u044f\u0442\u0438\u0439</label>
           <input id="schedule-generator-session-count" type="number" min="1" max="9" value="${escapeHtml(generator.sessionCount)}" />
         </div>
         <div class="field-group">
-          <label>Длительность</label>
-          <div class="scheduler-fixed-value">30 минут</div>
+          <label>\u0414\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c</label>
+          <div class="scheduler-fixed-value">30 \u043c\u0438\u043d\u0443\u0442</div>
         </div>
       </div>
       ${generator.error ? `<div class="scheduler-error">${escapeHtml(generator.error)}</div>` : ''}
@@ -344,31 +371,38 @@ function renderGeneratedPsychologistSchedule(result) {
             <header class="slot-header">
               <div>
                 <h4>${escapeHtml(day.date)}</h4>
-                <div class="slot-subtitle">${day.appointments.length} ${day.appointments.length === 1 ? 'занятие' : 'занятия'}</div>
+                <div class="slot-subtitle">${day.appointments.length} ${day.appointments.length === 1 ? '\u0437\u0430\u043d\u044f\u0442\u0438\u0435' : '\u0437\u0430\u043d\u044f\u0442\u0438\u044f'}</div>
               </div>
             </header>
             ${day.appointments.map((appointment) => `
               <div class="scheduler-appointment">
                 <strong>${escapeHtml(formatPersonName(appointment.psychologistName))}</strong>
                 <span>${escapeHtml(appointment.start)} - ${escapeHtml(appointment.end)}</span>
-                <span class="meta-pill">${escapeHtml(String(appointment.durationMin))} мин</span>
+                <span class="meta-pill">${escapeHtml(String(appointment.durationMin))} \u043c\u0438\u043d</span>
               </div>
             `).join('')}
           </article>
         `).join('')}
       </div>
       <div class="scheduler-unassigned">
-        <h4>Не распределено</h4>
+        <h4>\u041d\u0435 \u0440\u0430\u0441\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u043e</h4>
         ${result.unassigned.length
           ? `<ul class="scheduler-unassigned-list">${result.unassigned.map((item) => `<li>${escapeHtml(item.date)} - ${escapeHtml(item.reason)}</li>`).join('')}</ul>`
-          : '<p class="scheduler-success">Все занятия распределены.</p>'}
+          : '<p class="scheduler-success">\u0412\u0441\u0435 \u0437\u0430\u043d\u044f\u0442\u0438\u044f \u0440\u0430\u0441\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u044b.</p>'}
       </div>
     </div>
   `;
 }
 
+function getVisibleScheduleSlots() {
+  const slots = state.scheduleDay?.slots || [];
+  if (!state.providerId) return slots;
+  return slots.filter((slot) => slot.provider_id === state.providerId);
+}
+
 function renderSchedule() {
   const scheduleDay = state.scheduleDay;
+  const visibleSlots = getVisibleScheduleSlots();
   return `
     ${renderPsychologistSchedulePanel()}
     <section class="card" data-screen="schedule">
@@ -380,7 +414,7 @@ function renderSchedule() {
         <div class="field-group wide">
           <label for="cmbGridSchedules">\u0413\u0440\u0430\u0444\u0438\u043a</label>
           <select id="cmbGridSchedules" data-field-key="grid-schedule">
-            <option value="provider-1">${escapeHtml(state.bootstrap.providers[0].schedule_name)}</option>
+            ${state.bootstrap.providers.map((provider) => `<option value="${escapeHtml(provider.provider_id)}" ${provider.provider_id === state.providerId ? 'selected' : ''}>${escapeHtml(provider.schedule_name)}</option>`).join('')}
           </select>
         </div>
         <div class="field-group">
@@ -396,12 +430,12 @@ function renderSchedule() {
       <div class="schedule-wrap">
         <div id="schedule">
           <ul class="schedule-list">
-            ${scheduleDay.slots.map((slot) => `
-              <li class="slot-card" data-slot-id="${escapeHtml(slot.slot_id)}" data-appointment-id="${escapeHtml(slot.appointment_id)}" data-patient-id="${escapeHtml(slot.patient.patient_id)}" data-patient-name="${escapeHtml(slot.patient.full_name)}">
+            ${visibleSlots.map((slot) => `
+              <li class="slot-card" data-slot-id="${escapeHtml(slot.slot_id)}" data-appointment-id="${escapeHtml(slot.appointment_id)}" data-patient-id="${escapeHtml(slot.patient?.patient_id || '')}" data-patient-name="${escapeHtml(slot.patient?.full_name || '')}">
                 <div class="slot-header">
                   <div>
                     <h3>${escapeHtml(formatPersonName(slot.patient?.full_name) || '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e\u0435 \u043e\u043a\u043d\u043e')}</h3>
-                    <div class="slot-subtitle">${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)} • ${escapeHtml(slot.patient ? slot.service_name : '\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430')}</div>
+                    <div class="slot-subtitle">${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)} \u2022 ${escapeHtml(slot.patient ? slot.service_name : '\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0438 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430')}</div>
                   </div>
                   <span class="status-pill ${escapeHtml(slot.status)}">${slot.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : slot.status === 'scheduled' ? '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e' : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e'}</span>
                 </div>
@@ -414,8 +448,62 @@ function renderSchedule() {
                   <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">${slot.patient ? '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u043b\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u044b' : '\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430'}</button>
                 </div>
               </li>
-            `).join('')}
+            `).join('') || '<li class="slot-card"><div class="slot-header"><div><h3>\u041d\u0435\u0442 \u0441\u043b\u043e\u0442\u043e\u0432</h3><div class="slot-subtitle">\u0414\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430 \u043d\u0430 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u0443\u044e \u0434\u0430\u0442\u0443 \u0441\u043b\u043e\u0442\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b.</div></div></div></li>'}
           </ul>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderBoard() {
+  const scheduleDay = state.scheduleDay;
+  const providers = state.bootstrap?.providers || [];
+  const timeSlots = [...new Set((scheduleDay?.slots || []).map((slot) => slot.start_time))].sort();
+
+  return `
+    <section class="card board-card" data-screen="board">
+      <div class="controls board-controls">
+        <div class="field-group wide">
+          <label for="boardDate">\u0414\u0430\u0442\u0430</label>
+          <input id="boardDate" data-action="board-date" type="date" value="${escapeHtml(scheduleDay.date)}" />
+        </div>
+        <div class="board-summary">
+          <strong>\u041a\u043d\u043e\u043f\u043a\u0438 \u043d\u0430 \u0434\u043e\u0441\u043a\u0435:</strong>
+          <span>\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u2014 \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0432 \u0441\u043b\u043e\u0442.</span>
+          <span>\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u2014 \u0437\u0430\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430.</span>
+          <span>\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u2014 \u043f\u0435\u0440\u0435\u0439\u0442\u0438 \u0432 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043f\u0440\u0438\u0451\u043c\u0430.</span>
+          <span>\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u2014 \u043e\u0441\u0432\u043e\u0431\u043e\u0434\u0438\u0442\u044c \u0441\u043b\u043e\u0442.</span>
+        </div>
+        <div class="inline-actions">
+          <button class="ghost-button" data-action="go-schedule">\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0438</button>
+          <button class="secondary-button" data-action="refresh-board">\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0434\u043e\u0441\u043a\u0443</button>
+        </div>
+      </div>
+      <div class="board-wrap">
+        <div class="board-grid" style="grid-template-columns: 140px repeat(${providers.length}, minmax(260px, 1fr));">
+          <div class="board-head board-time-head">\u0412\u0440\u0435\u043c\u044f</div>
+          ${providers.map((provider) => `<div class="board-head">${escapeHtml(formatPersonName(provider.full_name))}<div class="board-subhead">${escapeHtml(provider.schedule_name)}</div></div>`).join('')}
+          ${timeSlots.map((time) => `
+            <div class="board-time-cell">${escapeHtml(time)} - ${escapeHtml(time.replace(':00', ':30'))}</div>
+            ${providers.map((provider) => {
+              const slot = scheduleDay.slots.find((item) => item.provider_id === provider.provider_id && item.start_time === time);
+              return `
+                <div class="board-cell ${slot?.patient ? 'occupied' : 'empty'}">
+                  <div class="board-cell-top">
+                    <strong>${escapeHtml(slot?.patient ? formatPersonName(slot.patient.full_name) : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e')}</strong>
+                    <span class="status-pill ${escapeHtml(slot?.status || 'available')}">${slot?.status === 'completed' ? '\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e' : slot?.status === 'scheduled' ? '\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e' : '\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e'}</span>
+                  </div>
+                  <div class="board-cell-meta">${slot?.patient ? `\u0418\u0418\u041d: ${escapeHtml(slot.patient.iin_or_local_id)}` : '\u041c\u043e\u0436\u043d\u043e \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430'}</div>
+                  <div class="board-cell-actions">
+                    <button class="secondary-button" data-action="open-patient-modal" data-slot-id="${escapeHtml(slot.slot_id)}">${slot?.patient ? '\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c' : '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c'}</button>
+                    ${slot?.patient ? `<button class="ghost-button" data-action="open-inspection" data-appointment-id="${escapeHtml(slot.appointment_id)}">\u041e\u0442\u043a\u0440\u044b\u0442\u044c</button>` : ''}
+                    ${slot?.patient ? `<button class="danger-button" data-action="unassign-slot" data-slot-id="${escapeHtml(slot.slot_id)}">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          `).join('')}
         </div>
       </div>
     </section>
@@ -453,67 +541,67 @@ function renderInspection() {
       <form id="frmInspectionResult" data-screen="inspection">
         <div class="inspection-grid">
           <div class="field-group">
-            <label for="dtpServiceExecuteDate">Дата выполнения</label>
+            <label for="dtpServiceExecuteDate">Р”Р°С‚Р° РІС‹РїРѕР»РЅРµРЅРёСЏ</label>
             <input id="dtpServiceExecuteDate" name="dtpServiceExecuteDate" type="date" value="${escapeHtml(draft.execute_date)}" data-field-key="dtpserviceexecutedate" />
           </div>
           <div class="field-group">
-            <label for="dtpServiceExecuteTime">Дата и время выполнения</label>
+            <label for="dtpServiceExecuteTime">Р”Р°С‚Р° Рё РІСЂРµРјСЏ РІС‹РїРѕР»РЅРµРЅРёСЏ</label>
             <input id="dtpServiceExecuteTime" name="dtpServiceExecuteTime" type="time" value="${escapeHtml(draft.execute_time)}" data-field-key="dtpserviceexecutetime" />
           </div>
           <div class="field-group">
-            <label for="ntbDurationMinute">Длительность в минутах</label>
+            <label for="ntbDurationMinute">Р”Р»РёС‚РµР»СЊРЅРѕСЃС‚СЊ РІ РјРёРЅСѓС‚Р°С…</label>
             <input id="ntbDurationMinute" name="ntbDurationMinute" type="number" min="1" max="1200" value="${escapeHtml(draft.duration_min)}" data-field-key="ntbdurationminute" />
           </div>
           <div class="field-group">
-            <label for="cmbMedicalEquipment">Медицинское оборудование</label>
+            <label for="cmbMedicalEquipment">РњРµРґРёС†РёРЅСЃРєРѕРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ</label>
             <select id="cmbMedicalEquipment" name="cmbMedicalEquipment" data-field-key="cmbmedicalequipment">${renderOptionList(selectOptions.equipment, draft.medical_equipment_id || '')}</select>
           </div>
           <div class="field-group">
-            <label for="cmbExecuteMedicalPost">Медицинский пост</label>
+            <label for="cmbExecuteMedicalPost">РњРµРґРёС†РёРЅСЃРєРёР№ РїРѕСЃС‚</label>
             <select id="cmbExecuteMedicalPost" name="cmbExecuteMedicalPost" data-field-key="cmbexecutemedicalpost">${renderOptionList(selectOptions.medicalPost, draft.medical_post_id)}</select>
           </div>
           <div class="field-group">
-            <label for="cmbMedicalForm">Форма</label>
+            <label for="cmbMedicalForm">Р¤РѕСЂРјР°</label>
             <select id="cmbMedicalForm" name="cmbMedicalForm" data-field-key="cmbmedicalform">${renderOptionList(selectOptions.medicalForms, draft.medical_form_id)}</select>
           </div>
           <div class="field-group">
-            <label for="cmbPerformerService">Услуга классификатора</label>
+            <label for="cmbPerformerService">РЈСЃР»СѓРіР° РєР»Р°СЃСЃРёС„РёРєР°С‚РѕСЂР°</label>
             <select id="cmbPerformerService" name="cmbPerformerService" data-field-key="cmbperformerservice">${renderOptionList(selectOptions.serviceClassifier, draft.service_classifier_id)}</select>
           </div>
           <div class="field-group">
-            <label for="cmbPerformerServiceMo">Услуга из прейскуранта</label>
+            <label for="cmbPerformerServiceMo">РЈСЃР»СѓРіР° РёР· РїСЂРµР№СЃРєСѓСЂР°РЅС‚Р°</label>
             <select id="cmbPerformerServiceMo" name="cmbPerformerServiceMo" data-field-key="cmbperformerservicemo">${renderOptionList(selectOptions.servicePrice, draft.service_price_item_id)}</select>
           </div>
           <div class="field-group full">
-            <label for="tbMedicalFinal">Заключение</label>
+            <label for="tbMedicalFinal">Р—Р°РєР»СЋС‡РµРЅРёРµ</label>
             <textarea id="tbMedicalFinal" name="tbMedicalFinal" rows="5" data-field-key="tbmedicalfinal">${escapeHtml(draft.conclusion_text)}</textarea>
           </div>
           <div class="field-group">
-            <label for="supp-specialist">ФИО специалиста</label>
+            <label for="supp-specialist">Р¤РРћ СЃРїРµС†РёР°Р»РёСЃС‚Р°</label>
             <input id="supp-specialist" value="${escapeHtml(draft.supplemental.specialist_name)}" />
           </div>
           <div class="field-group">
-            <label for="supp-completionDate">Дата окончания осмотра</label>
+            <label for="supp-completionDate">Р”Р°С‚Р° РѕРєРѕРЅС‡Р°РЅРёСЏ РѕСЃРјРѕС‚СЂР°</label>
             <input id="supp-completionDate" type="date" value="${escapeHtml(draft.supplemental.completion_date)}" />
           </div>
           <div class="field-group full">
-            <label for="supp-workPlan">Жұмыс жоспары / План работы</label>
+            <label for="supp-workPlan">Р–Т±РјС‹СЃ Р¶РѕСЃРїР°СЂС‹ / РџР»Р°РЅ СЂР°Р±РѕС‚С‹</label>
             <textarea id="supp-workPlan">${escapeHtml(draft.supplemental.work_plan)}</textarea>
           </div>
           <div class="field-group">
-            <label for="supp-plannedSessions">Количество планируемых занятий</label>
+            <label for="supp-plannedSessions">РљРѕР»РёС‡РµСЃС‚РІРѕ РїР»Р°РЅРёСЂСѓРµРјС‹С… Р·Р°РЅСЏС‚РёР№</label>
             <input id="supp-plannedSessions" value="${escapeHtml(draft.supplemental.planned_sessions)}" />
           </div>
           <div class="field-group">
-            <label for="supp-completedSessions">Количество проведенных занятий</label>
+            <label for="supp-completedSessions">РљРѕР»РёС‡РµСЃС‚РІРѕ РїСЂРѕРІРµРґРµРЅРЅС‹С… Р·Р°РЅСЏС‚РёР№</label>
             <input id="supp-completedSessions" value="${escapeHtml(draft.supplemental.completed_sessions)}" />
           </div>
           <div class="field-group full">
-            <label for="supp-dynamics">Динамика развития</label>
+            <label for="supp-dynamics">Р”РёРЅР°РјРёРєР° СЂР°Р·РІРёС‚РёСЏ</label>
             <textarea id="supp-dynamics">${escapeHtml(draft.supplemental.dynamics)}</textarea>
           </div>
           <div class="field-group full">
-            <label for="supp-recommendations">Рекомендации</label>
+            <label for="supp-recommendations">Р РµРєРѕРјРµРЅРґР°С†РёРё</label>
             <textarea id="supp-recommendations">${escapeHtml(draft.supplemental.recommendations)}</textarea>
           </div>
         </div>
@@ -533,9 +621,9 @@ function renderInspection() {
           `).join('')}
         </div>
         <div class="inline-actions" style="margin-top: 16px;">
-          <button id="btnSaveInspectionResult" type="button" class="button" data-action="save-inspection">Сохранить</button>
-          <button id="btnSaveAndCloseInspectionResult" type="button" class="secondary-button" data-action="save-close-inspection">Сохранить и закрыть</button>
-          <button type="button" class="ghost-button" data-action="go-schedule">Назад</button>
+          <button id="btnSaveInspectionResult" type="button" class="button" data-action="save-inspection">РЎРѕС…СЂР°РЅРёС‚СЊ</button>
+          <button id="btnSaveAndCloseInspectionResult" type="button" class="secondary-button" data-action="save-close-inspection">РЎРѕС…СЂР°РЅРёС‚СЊ Рё Р·Р°РєСЂС‹С‚СЊ</button>
+          <button type="button" class="ghost-button" data-action="go-schedule">РќР°Р·Р°Рґ</button>
         </div>
       </form>
     `,
@@ -560,7 +648,7 @@ function renderInspection() {
           <div class="header-subtitle">${escapeHtml(patient.birth_date || '')}</div>
         </div>
         <div class="meta-list">
-          <span class="status-pill ${escapeHtml(appointment.status)}">${appointment.status === 'completed' ? 'Выполнено' : 'Назначено'}</span>
+          <span class="status-pill ${escapeHtml(appointment.status)}">${appointment.status === 'completed' ? 'Р’С‹РїРѕР»РЅРµРЅРѕ' : 'РќР°Р·РЅР°С‡РµРЅРѕ'}</span>
           <span class="meta-pill">${escapeHtml(appointment.created_at)}</span>
         </div>
       </div>
@@ -573,21 +661,22 @@ function renderInspection() {
 }
 
 function renderHints() {
-  const scheduleGuide = state.route.screen === 'schedule'
+  const scheduleGuide = state.route.screen === 'schedule' || state.route.screen === 'board'
     ? `
       <div class="hint-card">
-        <p><strong>\u0427\u0442\u043e \u0437\u0434\u0435\u0441\u044c \u0437\u0430 \u0447\u0442\u043e \u043e\u0442\u0432\u0435\u0447\u0430\u0435\u0442</strong></p>
+        <p><strong>${state.route.screen === 'board' ? '\u041a\u0430\u043a \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442 \u0434\u043e\u0441\u043a\u0430' : '\u0427\u0442\u043e \u0437\u0434\u0435\u0441\u044c \u0437\u0430 \u0447\u0442\u043e \u043e\u0442\u0432\u0435\u0447\u0430\u0435\u0442'}</strong></p>
         <p>\u0421\u0432\u043e\u0431\u043e\u0434\u043d\u043e \u2014 \u043e\u043a\u043d\u043e \u0431\u0435\u0437 \u0437\u0430\u043f\u0438\u0441\u0430\u043d\u043d\u043e\u0433\u043e \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430.</p>
-        <p>\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0435\u043c \u0443\u0436\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d, \u0438 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043c\u043e\u0436\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u044c.</p>
-        <p>\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0435\u043c \u0443\u0436\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d, \u0438 \u0437\u0430\u043f\u0438\u0441\u044c \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0430.</p>
+        <p>\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0451\u043c \u0443\u0436\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d, \u0438 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043c\u043e\u0436\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u044c.</p>
+        <p>\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u2014 \u043f\u0440\u0438\u0451\u043c \u0443\u0436\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d, \u0438 \u0437\u0430\u043f\u0438\u0441\u044c \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0430.</p>
         <p>\u041f\u0440\u0438\u043a\u0440\u0435\u043f\u0438\u0442\u044c \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430 \u2014 \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u043e\u0432 \u0438\u043c\u0435\u043d\u043d\u043e \u044d\u0442\u043e\u0433\u043e \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430.</p>
+        ${state.route.screen === 'board' ? '<p>\u041b\u044e\u0431\u043e\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0437\u0434\u0435\u0441\u044c \u0441\u0440\u0430\u0437\u0443 \u043c\u0435\u043d\u044f\u0435\u0442 \u0438 \u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0435 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435, \u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f \u043e\u0434\u0438\u043d \u0438 \u0442\u043e\u0442 \u0436\u0435 runtime.</p>' : ''}
       </div>
     `
     : '';
 
   return `
     <section class="card">
-      <h3 class="panel-title">${state.route.screen === 'schedule' ? '\u041a\u0430\u043a \u0447\u0438\u0442\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435' : '\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438'}</h3>
+      <h3 class="panel-title">${state.route.screen === 'schedule' || state.route.screen === 'board' ? '\u041a\u0430\u043a \u0447\u0438\u0442\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435' : '\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438'}</h3>
       ${scheduleGuide}
       <ul class="hint-list">
         ${state.hints.map((hint) => `
@@ -606,12 +695,12 @@ function renderPatientModal() {
     <div class="overlay" id="wndSearchAttachPerson">
       <div class="modal">
         <header>
-          <h3 style="margin: 0;">Прикрепленные пациенты</h3>
+          <h3 style="margin: 0;">\u041f\u0430\u0446\u0438\u0435\u043d\u0442\u044b \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430</h3>
         </header>
         <main>
           <div class="field-group">
-            <label for="modal-search">Поиск по ФИО или ИИН</label>
-            <input id="modal-search" value="${escapeHtml(state.patientModal.query)}" placeholder="Начните вводить имя пациента" />
+            <label for="modal-search">\u041f\u043e\u0438\u0441\u043a \u043f\u043e \u0424\u0418\u041e \u0438\u043b\u0438 \u0418\u0418\u041d</label>
+            <input id="modal-search" value="${escapeHtml(state.patientModal.query)}" placeholder="\u041d\u0430\u0447\u043d\u0438\u0442\u0435 \u0432\u0432\u043e\u0434\u0438\u0442\u044c \u0438\u043c\u044f \u043f\u0430\u0446\u0438\u0435\u043d\u0442\u0430" />
           </div>
           <div id="grdSearchAttachPerson" class="modal-grid" style="margin-top: 18px;">
             ${state.patientModal.patients.map((patient) => `
@@ -620,16 +709,16 @@ function renderPatientModal() {
                   <h4>${escapeHtml(formatPersonName(patient.full_name))}</h4>
                   <span class="meta-pill">${escapeHtml(formatSpecialtyTrack(patient.specialty_track))}</span>
                 </header>
-                <p>ИИН: ${escapeHtml(patient.iin_or_local_id)}</p>
-                <p>Источники: ${escapeHtml((patient.history_refs || []).join(', '))}</p>
-                <button class="secondary-button" data-action="select-patient" data-patient-id="${escapeHtml(patient.patient_id)}">Выбрать</button>
+                <p>\u0418\u0418\u041d: ${escapeHtml(patient.iin_or_local_id)}</p>
+                <p>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438: ${escapeHtml((patient.history_refs || []).join(', '))}</p>
+                <button class="secondary-button" data-action="select-patient" data-patient-id="${escapeHtml(patient.patient_id)}">\u0412\u044b\u0431\u0440\u0430\u0442\u044c</button>
               </article>
             `).join('')}
           </div>
         </main>
         <footer>
-          <button class="ghost-button" data-action="close-patient-modal">Отмена</button>
-          <button id="btnAttachPersonAccept" class="button" data-action="confirm-attach-patient" ${state.patientModal.selectedPatientId ? '' : 'disabled'}>Записать на прием</button>
+          <button class="ghost-button" data-action="close-patient-modal">\u041e\u0442\u043c\u0435\u043d\u0430</button>
+          <button id="btnAttachPersonAccept" class="button" data-action="confirm-attach-patient" ${state.patientModal.selectedPatientId ? '' : 'disabled'}>\u0417\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u043d\u0430 \u043f\u0440\u0438\u0451\u043c</button>
         </footer>
       </div>
     </div>
@@ -643,13 +732,15 @@ function renderToast() {
 
 function render() {
   document.title = state.route.screen === 'inspection'
-    ? (state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'inspection')?.title || 'Назначение')
-    : (state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'schedule')?.title || 'Консультация и диагностика');
+    ? (state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'inspection')?.title || '\u041f\u0440\u0438\u0451\u043c')
+    : state.route.screen === 'board'
+      ? '\u0414\u043e\u0441\u043a\u0430 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u043e\u0432'
+      : (state.bootstrap?.sourceOfTruth?.screens?.find((screen) => screen.screen_id === 'schedule')?.title || '\u0420\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043f\u0441\u0438\u0445\u043e\u043b\u043e\u0433\u0430');
   app.innerHTML = `
     <div class="layout">
       <main class="main-panel">
         ${renderPageHeader()}
-        ${state.route.screen === 'inspection' ? renderInspection() : renderSchedule()}
+        ${state.route.screen === 'inspection' ? renderInspection() : state.route.screen === 'board' ? renderBoard() : renderSchedule()}
       </main>
       <aside class="side-panel">
         ${renderHints()}
@@ -675,6 +766,7 @@ window.addEventListener('hashchange', async () => {
     await loadInspection(state.route.appointmentId);
   } else {
     await loadSchedule(state.scheduleDay?.date || state.bootstrap.currentDate, state.statusFilter);
+    await loadHints(state.route.screen === 'board' ? 'schedule' : state.route.screen, null);
   }
 });
 
@@ -731,6 +823,16 @@ document.addEventListener('click', async (event) => {
   if (action === 'go-schedule') {
     window.location.hash = '#/schedule';
   }
+  if (action === 'go-board') {
+    window.location.hash = '#/board';
+  }
+  if (action === 'refresh-board') {
+    await refreshAudit();
+    await loadSchedule(state.scheduleDay.date, state.statusFilter);
+  }
+  if (action === 'unassign-slot') {
+    await unassignPatientFromSlot(target.dataset.slotId);
+  }
   if (action === 'save-inspection') {
     await saveInspection(false);
   }
@@ -738,7 +840,7 @@ document.addEventListener('click', async (event) => {
     await saveInspection(true);
   }
   if (action === 'show-slot-audit') {
-    state.toast = 'Последние audit entries показаны справа.';
+    state.toast = 'РџРѕСЃР»РµРґРЅРёРµ audit entries РїРѕРєР°Р·Р°РЅС‹ СЃРїСЂР°РІР°.';
     render();
   }
 
@@ -751,7 +853,11 @@ document.addEventListener('change', async (event) => {
     state.statusFilter = target.value;
     await loadSchedule(state.scheduleDay.date, state.statusFilter);
   }
-  if (target.id === 'dpCalendarDate') {
+  if (target.id === 'cmbGridSchedules') {
+    state.providerId = target.value;
+    render();
+  }
+  if (target.id === 'dpCalendarDate' || target.id === 'boardDate') {
     await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: target.value }) });
     await loadSchedule(target.value, state.statusFilter);
   }
