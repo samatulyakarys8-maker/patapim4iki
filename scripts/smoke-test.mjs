@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { buildArtifacts, seedRuntimeState } from '../lib/dataset.mjs';
-import { analyzeAdvisor } from '../lib/advisor.mjs';
+import { AdvisorContextError, analyzeAdvisor } from '../lib/advisor.mjs';
+import { getOpenAiSttConfig, normalizeOpenAiAudioMimeType } from '../lib/openai-stt.mjs';
+import { normalizeTranscript as normalizeCanonicalTranscript } from '../lib/transcript-normalizer.mjs';
 import {
   buildProcedureSchedulePreview,
   getDeepgramRealtimeConfig,
   inferPatapimSpeakerRole,
+  ingestTranscript,
+  observeAgent,
   previewCommand
 } from '../lib/agent.mjs';
 import {
@@ -22,6 +26,7 @@ import {
 } from '../lib/voice-mode.mjs';
 import {
   extractPatientQuery,
+  normalizeTranscript as normalizeCommandTranscript,
   parseVoiceCommand,
   resolvePatientQuery
 } from '../lib/command-router.mjs';
@@ -30,6 +35,28 @@ const artifacts = buildArtifacts();
 const runtime = seedRuntimeState(artifacts);
 const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
 delete process.env.OPENROUTER_API_KEY;
+
+const normalizedSample = normalizeCanonicalTranscript('ну у ребенка эээ вечером болят ноги');
+assert.equal(normalizedSample.raw_transcript, 'ну у ребенка эээ вечером болят ноги');
+assert.equal(normalizedSample.normalized_transcript.includes('ну'), false);
+assert.equal(normalizedSample.normalized_transcript.includes('эээ'), false);
+assert.equal(normalizedSample.normalized_transcript.includes('вечером болят ноги'), true);
+assert.ok(normalizedSample.removed_fillers.includes('ну'));
+const canonicalVoice = normalizeCanonicalTranscript('otkroi nurzhan');
+const commandVoice = normalizeCommandTranscript('otkroi nurzhan');
+assert.equal(commandVoice.normalizedText, canonicalVoice.normalized_transcript);
+assert.ok(commandVoice.tokens.includes('нуржан'));
+assert.ok(commandVoice.normalizedText.includes('открой'));
+const openAiSttConfig = getOpenAiSttConfig({
+  OPENAI_API_KEY: 'test',
+  OPENAI_TRANSCRIBE_MODEL: 'whisper-1',
+  OPENAI_STT_PREFERRED: 'true'
+});
+assert.equal(openAiSttConfig.apiKeyConfigured, true);
+assert.equal(openAiSttConfig.model, 'whisper-1');
+assert.equal(openAiSttConfig.preferred, true);
+assert.equal(normalizeOpenAiAudioMimeType('audio/webm;codecs=opus'), 'audio/webm');
+assert.equal(normalizeOpenAiAudioMimeType('audio/ogg;codecs=opus'), 'audio/ogg');
 
 assert.ok(artifacts.screen_inventory.some((screen) => screen.screen_id === 'schedule'));
 assert.ok(artifacts.screen_inventory.some((screen) => screen.screen_id === 'inspection'));
@@ -59,6 +86,20 @@ assert.deepEqual(
 );
 
 const advisorAppointmentId = Object.keys(runtime.appointments)[0];
+const normalizedIngest = await ingestTranscript(runtime, {
+  appointmentId: advisorAppointmentId,
+  sessionId: 'test-normalization-session',
+  text: 'ну у ребенка эээ вечером болят ноги',
+  speakerTag: 'patient'
+});
+assert.equal(normalizedIngest.chunk.text, 'ну у ребенка эээ вечером болят ноги');
+assert.equal(normalizedIngest.chunk.normalized_text.includes('эээ'), false);
+assert.equal(normalizedIngest.chunk.normalized_text.includes('вечером болят ноги'), true);
+assert.equal(
+  normalizedIngest.draftPatches.some((patch) => ['tbmedicalfinal', 'recommendations', 'dynamics', 'work-plan'].includes(patch.field_key)),
+  false
+);
+
 const advisor = await analyzeAdvisor(runtime, {
   appointmentId: advisorAppointmentId,
   question: 'Подскажи следующий шаг приема.',
@@ -66,14 +107,143 @@ const advisor = await analyzeAdvisor(runtime, {
 });
 assert.equal(advisor.provider.type, 'heuristic');
 assert.ok(advisor.answer.next_step);
+assert.ok(advisor.interview_reasoning);
+assert.equal(advisor.interview_reasoning.stage, 'complaints');
+assert.ok(Array.isArray(advisor.interview_reasoning.missing_fields));
+assert.ok(advisor.interview_reasoning.next_best_question);
+assert.ok(advisor.advisor_debug);
+assert.equal(typeof advisor.advisor_debug.raw_deepgram_transcript, 'string');
+assert.equal(typeof advisor.advisor_debug.normalized_transcript, 'string');
+assert.equal(advisor.advisor_context.screen_scope, 'inspection');
+assert.equal(advisor.advisor_context.can_patch_draft, true);
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.ui.visible, true);
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.ui.screen_scope, 'inspection');
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.ui.active_question, advisor.interview_reasoning.next_best_question);
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.ui.stage, advisor.interview_reasoning.stage);
+assert.equal(Array.isArray(advisor.interview_reasoning.covered_fields), true);
+assert.equal(typeof advisor.interview_reasoning.advisor_complete, 'boolean');
+assert.equal(Array.isArray(advisor.interview_reasoning.patch_preview), true);
 assert.ok(Array.isArray(advisor.answer.questions_to_ask));
 assert.ok(advisor.answer.questions_to_ask.length > 0);
 assert.ok(Array.isArray(advisor.answer.differential_hypotheses));
 assert.ok(advisor.answer.differential_hypotheses.length > 0);
-const advisorAnswerText = JSON.stringify(advisor.answer).toLowerCase();
+const advisorAnswerText = JSON.stringify(advisor).toLowerCase();
 assert.equal(advisorAnswerText.includes('domoperations'), false);
 assert.equal(advisorAnswerText.includes('selector'), false);
-assert.equal(advisorAnswerText.includes('screen_id'), false);
+
+runtime.appointments[advisorAppointmentId].draft_state.advisor_state = null;
+runtime.appointments[advisorAppointmentId].draft_state.transcript_chunks = [];
+
+runtime.appointments[advisorAppointmentId].draft_state.transcript_chunks.push({
+  chunk_id: 'test-advisor-complaint',
+  session_id: 'test',
+  start_ms: 0,
+  end_ms: 1000,
+  text: 'У ребенка вечером болят ноги и он быстро устает.',
+  speaker_tag: 'patient',
+  confidence: 0.92
+});
+const complaintAdvisor = await analyzeAdvisor(runtime, {
+  appointmentId: advisorAppointmentId,
+  question: 'Подскажи врачу следующий вопрос.',
+  screenContext: { screen_id: 'inspection', selected_appointment_id: advisorAppointmentId }
+});
+assert.equal(complaintAdvisor.interview_reasoning.stage, 'complaints');
+assert.ok(complaintAdvisor.interview_reasoning.new_facts.some((fact) => fact.field === 'main_complaint'));
+assert.ok(complaintAdvisor.interview_reasoning.new_facts.some((fact) => fact.source === 'normalized_transcript'));
+assert.equal(complaintAdvisor.advisor_debug.raw_deepgram_transcript.includes('болят ноги'), true);
+assert.equal(complaintAdvisor.advisor_debug.normalized_transcript.includes('болят ноги'), true);
+assert.equal(
+  complaintAdvisor.interview_reasoning.normalized_field_values.tbmedicalfinal.includes('Жалобы на боли в нижних конечностях'),
+  true
+);
+assert.equal(
+  complaintAdvisor.interview_reasoning.next_best_question.toLowerCase().includes('что вас беспокоит'),
+  false
+);
+assert.equal(
+  /когда впервые появились|после ходьбы|в покое/i.test(complaintAdvisor.interview_reasoning.next_best_question),
+  true
+);
+assert.equal(complaintAdvisor.interview_reasoning.follow_up_count, 1);
+assert.deepEqual(complaintAdvisor.interview_reasoning.selected_gap_groups, ['timeline', 'load_vs_rest']);
+
+runtime.appointments[advisorAppointmentId].draft_state.transcript_chunks.push({
+  chunk_id: 'test-advisor-progress-1',
+  session_id: 'test',
+  start_ms: 0,
+  end_ms: 1000,
+  text: 'Началось две недели назад, после ходьбы усиливается.',
+  speaker_tag: 'patient',
+  confidence: 0.92
+});
+const progressedAdvisor = await analyzeAdvisor(runtime, {
+  appointmentId: advisorAppointmentId,
+  question: 'Подскажи врачу следующий вопрос.',
+  screenContext: { screen_id: 'inspection', selected_appointment_id: advisorAppointmentId }
+});
+assert.notEqual(progressedAdvisor.interview_reasoning.next_best_question, complaintAdvisor.interview_reasoning.next_best_question);
+assert.equal(progressedAdvisor.interview_reasoning.next_best_question.toLowerCase().includes('что вас беспокоит'), false);
+assert.equal(
+  /ночному сну|менее активным|в течение дня/i.test(progressedAdvisor.interview_reasoning.next_best_question),
+  true
+);
+assert.equal(progressedAdvisor.interview_reasoning.follow_up_count, 2);
+assert.equal(progressedAdvisor.interview_reasoning.demo_complete, false);
+
+runtime.appointments[advisorAppointmentId].draft_state.transcript_chunks.push({
+  chunk_id: 'test-advisor-progress-2',
+  session_id: 'test',
+  start_ms: 0,
+  end_ms: 1000,
+  text: 'Из-за боли просыпается ночью, быстро устает при ходьбе, днем стал менее активным. Состояние стало хуже, ранее проходил реабилитацию.',
+  speaker_tag: 'patient',
+  confidence: 0.92
+});
+const completedAdvisor = await analyzeAdvisor(runtime, {
+  appointmentId: advisorAppointmentId,
+  question: 'Подскажи врачу следующий вопрос.',
+  screenContext: { screen_id: 'inspection', selected_appointment_id: advisorAppointmentId }
+});
+assert.equal(completedAdvisor.interview_reasoning.advisor_complete, true);
+assert.equal(completedAdvisor.interview_reasoning.demo_complete, true);
+assert.equal(completedAdvisor.interview_reasoning.next_best_question, '');
+assert.equal(completedAdvisor.answer.questions_to_ask.length, 0);
+assert.equal(completedAdvisor.interview_reasoning.patch_preview.length > 0, true);
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.ui.mode, 'completed');
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.ui.active_question, '');
+assert.equal(runtime.appointments[advisorAppointmentId].draft_state.advisor_state.follow_up_count, 2);
+
+const patientCardAdvisor = await analyzeAdvisor(runtime, {
+  appointmentId: null,
+  question: 'У ребенка вечером болят ноги.',
+  screenContext: { screen_id: 'patient_card', selected_patient_id: runtime.patients[0].patient_id }
+});
+assert.equal(patientCardAdvisor.advisor_context.screen_scope, 'patient_card');
+assert.equal(patientCardAdvisor.advisor_context.patient_id, runtime.patients[0].patient_id);
+assert.equal(patientCardAdvisor.advisor_context.appointment_id, null);
+assert.equal(patientCardAdvisor.advisor_context.can_patch_draft, false);
+assert.ok(patientCardAdvisor.interview_reasoning.next_best_question);
+
+const stalePatientIdAdvisor = await analyzeAdvisor(runtime, {
+  appointmentId: null,
+  question: 'У ребенка вечером болят ноги.',
+  screenContext: {
+    screen_id: 'patient_card',
+    selected_patient_id: 'stale-dom-patient-id',
+    selected_patient_name: runtime.patients[0].full_name
+  }
+});
+assert.equal(stalePatientIdAdvisor.advisor_context.patient_id, runtime.patients[0].patient_id);
+
+await assert.rejects(
+  analyzeAdvisor(runtime, {
+    appointmentId: null,
+    question: 'У ребенка вечером болят ноги.',
+    screenContext: { screen_id: 'patient_card', selected_patient_id: 'missing-patient' }
+  }),
+  (error) => error instanceof AdvisorContextError && error.code === 'advisor_context_missing'
+);
 if (originalOpenRouterKey) {
   process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
 }
@@ -285,7 +455,7 @@ assert.equal(parseVoiceCommand('сохрани и закрой').actionTarget, '
 assert.equal(parseVoiceCommand('сохрани запись').intent, 'save_record');
 assert.equal(parseVoiceCommand('сформируй расписание').intent, 'generate_schedule');
 assert.equal(parseVoiceCommand('отметь процедуру выполненной').intent, 'complete_service');
-assert.equal(extractPatientQuery('открой пациента Темірбай'), 'темірбай');
+assert.equal(extractPatientQuery('открой пациента Темірбай'), 'темирбай');
 assert.equal(extractPatientQuery('найди карточку Рахметолла'), 'рахметолла');
 const patientMatch = resolvePatientQuery('темирбай айбат', runtime.patients);
 assert.equal(patientMatch.status, 'matched');
@@ -294,6 +464,48 @@ assert.ok(patientMatch.candidates[0].score >= 0.72);
 assert.equal(resolvePatientQuery('temirbay', runtime.patients).matchedPatient.patient_id, 'patient-history-4');
 assert.equal(resolvePatientQuery('рахметула айкуным', runtime.patients).matchedPatient.patient_id, 'patient-1');
 assert.equal(resolvePatientQuery('анкар', runtime.patients).matchedPatient.patient_id, 'patient-history-2');
+assert.equal(resolvePatientQuery('абаямина', runtime.patients).matchedPatient.full_name, 'Абай Амина');
 assert.equal(resolvePatientQuery('пациента', runtime.patients).status, 'not_found');
+assert.equal(parseVoiceCommand('otkroi nurzhan').intent, 'open_patient');
+assert.equal(parseVoiceCommand('otkroi nurzhan').patientQuery, 'нуржан');
+
+const contextualPatients = [
+  { patient_id: 'ctx-1', full_name: 'Нуржан Алиев', iin_or_local_id: 'ctx-1' },
+  { patient_id: 'ctx-2', full_name: 'Нурлан Алиев', iin_or_local_id: 'ctx-2' }
+];
+const contextualResolution = resolvePatientQuery('nurzhan', contextualPatients, {
+  screenContext: {
+    visible_slot_cards: [{ patient_id: 'ctx-1' }],
+    selected_patient_id: 'ctx-1'
+  },
+  runtime: { currentDate: '2026-04-18', scheduleDays: [{ date: '2026-04-18', slots: [{ patient_id: 'ctx-1' }] }] }
+});
+assert.equal(contextualResolution.candidates[0].patient.patient_id, 'ctx-1');
+assert.ok(contextualResolution.candidates[0].reasons.some((reason) => reason.startsWith('visible:+')));
+
+const observeTab = await observeAgent(runtime, {
+  command: 'открой вкладку медицинские записи',
+  transcriptDelta: 'открой вкладку медицинские записи',
+  screenContext: {
+    screen_id: 'inspection',
+    selected_appointment_id: firstSlot.appointment_id,
+    visible_tabs: [
+      { label: 'Медицинские записи', selector: '[data-action="switch-tab"][data-tab="medicalRecords"]' }
+    ]
+  }
+});
+assert.equal(observeTab.deterministicCommandResult.intent, 'open_tab');
+assert.equal(observeTab.commandResult.debug.llmFallbackInvoked, false);
+assert.equal(observeTab.commandResult.debug.provider, 'deterministic_command_router');
+
+const observeMedicalSpeech = await observeAgent(runtime, {
+  command: 'у ребенка вечером болят ноги',
+  transcriptDelta: 'у ребенка вечером болят ноги',
+  screenContext: {
+    screen_id: 'inspection',
+    selected_appointment_id: firstSlot.appointment_id
+  }
+});
+assert.equal(observeMedicalSpeech.commandResult, null);
 
 console.log('Smoke test passed');

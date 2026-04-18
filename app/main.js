@@ -22,6 +22,8 @@
   }
 };
 
+let inspectionRefreshPromise = null;
+
 const app = document.querySelector('#app');
 
 const selectOptions = {
@@ -172,6 +174,27 @@ async function loadInspection(appointmentId) {
   render();
 }
 
+function currentAdvisorUi() {
+  return state.appointmentBundle?.advisor_ui
+    || state.appointmentBundle?.draftState?.advisor_state?.ui
+    || null;
+}
+
+async function refreshInspectionContext() {
+  if (state.route.screen !== 'inspection' || !state.route.appointmentId) return;
+  if (inspectionRefreshPromise) return inspectionRefreshPromise;
+  inspectionRefreshPromise = (async () => {
+    try {
+      const payload = await api(`/api/appointments/${state.route.appointmentId}`);
+      state.appointmentBundle = payload;
+      render();
+    } finally {
+      inspectionRefreshPromise = null;
+    }
+  })();
+  return inspectionRefreshPromise;
+}
+
 async function openPatientModal(slotId) {
   const slot = state.scheduleDay?.slots?.find((item) => item.slot_id === slotId);
   const providerId = slot?.provider_id || '';
@@ -223,7 +246,7 @@ async function assignPatientToSlot() {
     body: JSON.stringify({ patient_id: state.patientModal.selectedPatientId })
   });
   state.patientModal.open = false;
-  state.toast = `РџР°С†РёРµРЅС‚ ${formatPersonName(payload.patient.full_name)} РЅР°Р·РЅР°С‡РµРЅ РЅР° СЃР»РѕС‚.`;
+  state.toast = `Пациент ${formatPersonName(payload.patient.full_name)} назначен на слот.`;
   await refreshAudit();
   if (state.route.screen === 'board') {
     await loadSchedule(state.scheduleDay.date, state.statusFilter);
@@ -236,7 +259,7 @@ async function unassignPatientFromSlot(slotId) {
   await api(`/api/slots/${slotId}/unassign`, {
     method: 'POST'
   });
-  state.toast = 'РџР°С†РёРµРЅС‚ СЃРЅСЏС‚ СЃРѕ СЃР»РѕС‚Р°.';
+  state.toast = 'Пациент снят со слота.';
   await refreshAudit();
   await loadSchedule(state.scheduleDay.date, state.statusFilter);
 }
@@ -283,7 +306,7 @@ async function saveInspection(closeAfter) {
     method: 'POST',
     body: JSON.stringify(payload)
   });
-  state.toast = 'Р—Р°РїРёСЃСЊ СЃРѕС…СЂР°РЅРµРЅР°. РЎС‚Р°С‚СѓСЃ РѕР±РЅРѕРІР»РµРЅ РЅР° В«Р’С‹РїРѕР»РЅРµРЅРѕВ».';
+  state.toast = 'Запись сохранена. Статус обновлен на «Выполнено».';
   await refreshAudit();
   if (closeAfter) {
     window.location.hash = '#/schedule';
@@ -541,67 +564,67 @@ function renderInspection() {
       <form id="frmInspectionResult" data-screen="inspection">
         <div class="inspection-grid">
           <div class="field-group">
-            <label for="dtpServiceExecuteDate">Р”Р°С‚Р° РІС‹РїРѕР»РЅРµРЅРёСЏ</label>
+            <label for="dtpServiceExecuteDate">Дата выполнения</label>
             <input id="dtpServiceExecuteDate" name="dtpServiceExecuteDate" type="date" value="${escapeHtml(draft.execute_date)}" data-field-key="dtpserviceexecutedate" />
           </div>
           <div class="field-group">
-            <label for="dtpServiceExecuteTime">Р”Р°С‚Р° Рё РІСЂРµРјСЏ РІС‹РїРѕР»РЅРµРЅРёСЏ</label>
+            <label for="dtpServiceExecuteTime">Дата и время выполнения</label>
             <input id="dtpServiceExecuteTime" name="dtpServiceExecuteTime" type="time" value="${escapeHtml(draft.execute_time)}" data-field-key="dtpserviceexecutetime" />
           </div>
           <div class="field-group">
-            <label for="ntbDurationMinute">Р”Р»РёС‚РµР»СЊРЅРѕСЃС‚СЊ РІ РјРёРЅСѓС‚Р°С…</label>
+            <label for="ntbDurationMinute">Длительность в минутах</label>
             <input id="ntbDurationMinute" name="ntbDurationMinute" type="number" min="1" max="1200" value="${escapeHtml(draft.duration_min)}" data-field-key="ntbdurationminute" />
           </div>
           <div class="field-group">
-            <label for="cmbMedicalEquipment">РњРµРґРёС†РёРЅСЃРєРѕРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ</label>
+            <label for="cmbMedicalEquipment">Медицинское оборудование</label>
             <select id="cmbMedicalEquipment" name="cmbMedicalEquipment" data-field-key="cmbmedicalequipment">${renderOptionList(selectOptions.equipment, draft.medical_equipment_id || '')}</select>
           </div>
           <div class="field-group">
-            <label for="cmbExecuteMedicalPost">РњРµРґРёС†РёРЅСЃРєРёР№ РїРѕСЃС‚</label>
+            <label for="cmbExecuteMedicalPost">Медицинский пост</label>
             <select id="cmbExecuteMedicalPost" name="cmbExecuteMedicalPost" data-field-key="cmbexecutemedicalpost">${renderOptionList(selectOptions.medicalPost, draft.medical_post_id)}</select>
           </div>
           <div class="field-group">
-            <label for="cmbMedicalForm">Р¤РѕСЂРјР°</label>
+            <label for="cmbMedicalForm">Форма</label>
             <select id="cmbMedicalForm" name="cmbMedicalForm" data-field-key="cmbmedicalform">${renderOptionList(selectOptions.medicalForms, draft.medical_form_id)}</select>
           </div>
           <div class="field-group">
-            <label for="cmbPerformerService">РЈСЃР»СѓРіР° РєР»Р°СЃСЃРёС„РёРєР°С‚РѕСЂР°</label>
+            <label for="cmbPerformerService">Услуга классификатора</label>
             <select id="cmbPerformerService" name="cmbPerformerService" data-field-key="cmbperformerservice">${renderOptionList(selectOptions.serviceClassifier, draft.service_classifier_id)}</select>
           </div>
           <div class="field-group">
-            <label for="cmbPerformerServiceMo">РЈСЃР»СѓРіР° РёР· РїСЂРµР№СЃРєСѓСЂР°РЅС‚Р°</label>
+            <label for="cmbPerformerServiceMo">Услуга из прейскуранта</label>
             <select id="cmbPerformerServiceMo" name="cmbPerformerServiceMo" data-field-key="cmbperformerservicemo">${renderOptionList(selectOptions.servicePrice, draft.service_price_item_id)}</select>
           </div>
           <div class="field-group full">
-            <label for="tbMedicalFinal">Р—Р°РєР»СЋС‡РµРЅРёРµ</label>
+            <label for="tbMedicalFinal">Заключение</label>
             <textarea id="tbMedicalFinal" name="tbMedicalFinal" rows="5" data-field-key="tbmedicalfinal">${escapeHtml(draft.conclusion_text)}</textarea>
           </div>
           <div class="field-group">
-            <label for="supp-specialist">Р¤РРћ СЃРїРµС†РёР°Р»РёСЃС‚Р°</label>
+            <label for="supp-specialist">ФИО специалиста</label>
             <input id="supp-specialist" value="${escapeHtml(draft.supplemental.specialist_name)}" />
           </div>
           <div class="field-group">
-            <label for="supp-completionDate">Р”Р°С‚Р° РѕРєРѕРЅС‡Р°РЅРёСЏ РѕСЃРјРѕС‚СЂР°</label>
+            <label for="supp-completionDate">Дата окончания осмотра</label>
             <input id="supp-completionDate" type="date" value="${escapeHtml(draft.supplemental.completion_date)}" />
           </div>
           <div class="field-group full">
-            <label for="supp-workPlan">Р–Т±РјС‹СЃ Р¶РѕСЃРїР°СЂС‹ / РџР»Р°РЅ СЂР°Р±РѕС‚С‹</label>
+            <label for="supp-workPlan">Жұмыс жоспары / План работы</label>
             <textarea id="supp-workPlan">${escapeHtml(draft.supplemental.work_plan)}</textarea>
           </div>
           <div class="field-group">
-            <label for="supp-plannedSessions">РљРѕР»РёС‡РµСЃС‚РІРѕ РїР»Р°РЅРёСЂСѓРµРјС‹С… Р·Р°РЅСЏС‚РёР№</label>
+            <label for="supp-plannedSessions">Количество планируемых занятий</label>
             <input id="supp-plannedSessions" value="${escapeHtml(draft.supplemental.planned_sessions)}" />
           </div>
           <div class="field-group">
-            <label for="supp-completedSessions">РљРѕР»РёС‡РµСЃС‚РІРѕ РїСЂРѕРІРµРґРµРЅРЅС‹С… Р·Р°РЅСЏС‚РёР№</label>
+            <label for="supp-completedSessions">Количество проведенных занятий</label>
             <input id="supp-completedSessions" value="${escapeHtml(draft.supplemental.completed_sessions)}" />
           </div>
           <div class="field-group full">
-            <label for="supp-dynamics">Р”РёРЅР°РјРёРєР° СЂР°Р·РІРёС‚РёСЏ</label>
+            <label for="supp-dynamics">Динамика развития</label>
             <textarea id="supp-dynamics">${escapeHtml(draft.supplemental.dynamics)}</textarea>
           </div>
           <div class="field-group full">
-            <label for="supp-recommendations">Р РµРєРѕРјРµРЅРґР°С†РёРё</label>
+            <label for="supp-recommendations">Рекомендации</label>
             <textarea id="supp-recommendations">${escapeHtml(draft.supplemental.recommendations)}</textarea>
           </div>
         </div>
@@ -621,9 +644,9 @@ function renderInspection() {
           `).join('')}
         </div>
         <div class="inline-actions" style="margin-top: 16px;">
-          <button id="btnSaveInspectionResult" type="button" class="button" data-action="save-inspection">РЎРѕС…СЂР°РЅРёС‚СЊ</button>
-          <button id="btnSaveAndCloseInspectionResult" type="button" class="secondary-button" data-action="save-close-inspection">РЎРѕС…СЂР°РЅРёС‚СЊ Рё Р·Р°РєСЂС‹С‚СЊ</button>
-          <button type="button" class="ghost-button" data-action="go-schedule">РќР°Р·Р°Рґ</button>
+          <button id="btnSaveInspectionResult" type="button" class="button" data-action="save-inspection">Сохранить</button>
+          <button id="btnSaveAndCloseInspectionResult" type="button" class="secondary-button" data-action="save-close-inspection">Сохранить и закрыть</button>
+          <button type="button" class="ghost-button" data-action="go-schedule">Назад</button>
         </div>
       </form>
     `,
@@ -648,7 +671,7 @@ function renderInspection() {
           <div class="header-subtitle">${escapeHtml(patient.birth_date || '')}</div>
         </div>
         <div class="meta-list">
-          <span class="status-pill ${escapeHtml(appointment.status)}">${appointment.status === 'completed' ? 'Р’С‹РїРѕР»РЅРµРЅРѕ' : 'РќР°Р·РЅР°С‡РµРЅРѕ'}</span>
+          <span class="status-pill ${escapeHtml(appointment.status)}">${appointment.status === 'completed' ? 'Выполнено' : 'Назначено'}</span>
           <span class="meta-pill">${escapeHtml(appointment.created_at)}</span>
         </div>
       </div>
@@ -657,6 +680,21 @@ function renderInspection() {
       </div>
       <div class="inspection-wrap" id="i-body">${tabBody[state.activeTab]}</div>
     </section>
+  `;
+}
+
+function renderAdvisorQuestionOverlay() {
+  if (state.route.screen !== 'inspection') return '';
+  const advisorUi = currentAdvisorUi();
+  if (!advisorUi?.visible || !advisorUi.active_question) return '';
+  return `
+    <div class="advisor-question-overlay" data-advisor-question="active">
+      <section class="advisor-question-box" aria-live="polite">
+        <div class="advisor-question-label">Нужно уточнить</div>
+        ${advisorUi.stage_label ? `<div class="advisor-question-stage">${escapeHtml(advisorUi.stage_label)}</div>` : ''}
+        <p class="advisor-question-text">${escapeHtml(advisorUi.active_question)}</p>
+      </section>
+    </div>
   `;
 }
 
@@ -770,6 +808,10 @@ window.addEventListener('hashchange', async () => {
   }
 });
 
+window.addEventListener('damumed-assistant-refresh', async () => {
+  await refreshInspectionContext();
+});
+
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action], #btnPrevDay, #btnNextDay, #btnRefresh, #btnSaveInspectionResult, #btnSaveAndCloseInspectionResult');
   if (!target) return;
@@ -840,7 +882,7 @@ document.addEventListener('click', async (event) => {
     await saveInspection(true);
   }
   if (action === 'show-slot-audit') {
-    state.toast = 'РџРѕСЃР»РµРґРЅРёРµ audit entries РїРѕРєР°Р·Р°РЅС‹ СЃРїСЂР°РІР°.';
+    state.toast = 'Последние audit entries показаны справа.';
     render();
   }
 
