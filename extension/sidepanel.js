@@ -37,8 +37,14 @@ const presetCountEl = document.querySelector('#presetCount');
 const assetUploadInputEl = document.querySelector('#assetUploadInput');
 const refreshWorkspaceEl = document.querySelector('#refreshWorkspace');
 const chatViewEl = document.querySelector('#chatView');
+const routeViewEl = document.querySelector('#routeView');
 const whatsappViewEl = document.querySelector('#whatsappView');
 const viewTabEls = [...document.querySelectorAll('.view-tab')];
+const voiceModeSelectEl = document.querySelector('#voiceModeSelect');
+const refreshRoutePlansEl = document.querySelector('#refreshRoutePlans');
+const suggestRoutePlanEl = document.querySelector('#suggestRoutePlan');
+const routePlanListEl = document.querySelector('#routePlanList');
+const routePlanDetailEl = document.querySelector('#routePlanDetail');
 const whatsappDoctorSelectEl = document.querySelector('#whatsappDoctorSelect');
 const whatsappQrBoxEl = document.querySelector('#whatsappQrBox');
 const whatsappDoctorLinkEl = document.querySelector('#whatsappDoctorLink');
@@ -120,7 +126,12 @@ const state = {
   whatsappSelectedDoctorId: '',
   whatsappIntakes: [],
   whatsappSelectedIntakeId: '',
-  importedIntakeNotes: []
+  importedIntakeNotes: [],
+  routePlans: [],
+  selectedRoutePlanId: '',
+  voiceMode: 'navigation',
+  dialogueTranscriptParts: [],
+  dialogueRecordingStartedAt: 0
 };
 
 async function send(message) {
@@ -194,6 +205,7 @@ function setActiveView(view) {
   state.activeView = view;
   document.body.dataset.activeView = view;
   chatViewEl.hidden = view !== 'chat';
+  routeViewEl.hidden = view !== 'route';
   whatsappViewEl.hidden = view !== 'whatsapp';
   for (const button of viewTabEls) {
     button.classList.toggle('is-active', button.dataset.view === view);
@@ -201,12 +213,136 @@ function setActiveView(view) {
   if (view === 'whatsapp') {
     loadWhatsAppDoctors({ silent: true }).catch(showError);
   }
+  if (view === 'route') {
+    loadRoutePlans({ silent: true }).catch(showError);
+  }
 }
 
 function importedIntakeContextText() {
   return state.importedIntakeNotes.length
     ? `\n\nКонтекст WhatsApp:\n${state.importedIntakeNotes.join('\n\n')}`
     : '';
+}
+
+function routeContextText() {
+  const plan = state.routePlans.find((item) => item.plan_id === state.selectedRoutePlanId) || state.routePlans[0];
+  if (!plan) return '';
+  const lines = [
+    `Маршрут пациента: ${plan.patient?.full_name || plan.patient_id}`,
+    `Окно: ${plan.window_start_date} - ${plan.window_end_date}`,
+    `Статус: ${plan.status_label || plan.status}`
+  ];
+  for (const item of plan.items || []) {
+    lines.push(`- ${item.date} ${item.start_time}: ${item.service_name} (${item.provider_name}) - ${item.status_label || item.status}. ${item.reason || ''}`);
+    if (item.result_note) lines.push(`  Результат: ${item.result_note}`);
+  }
+  return `\n\nМаршрут пациента:\n${lines.join('\n')}`;
+}
+
+function renderRoutePlanList() {
+  if (!routePlanListEl) return;
+  if (!state.routePlans.length) {
+    routePlanListEl.innerHTML = '<p class="subtitle">Пока нет маршрутов для текущего пациента.</p>';
+    routePlanDetailEl.innerHTML = '<p class="subtitle">Откройте форму приёма и нажмите “Предложить 9 дней”.</p>';
+    return;
+  }
+  routePlanListEl.innerHTML = state.routePlans.map((plan) => `
+    <button class="intake-card ${plan.plan_id === state.selectedRoutePlanId ? 'is-active' : ''}" type="button" data-route-plan-id="${plan.plan_id}">
+      <span class="card-row">
+        <strong>${escapeHtml(plan.patient?.full_name || 'Пациент')}</strong>
+        <span class="status-chip">${escapeHtml(plan.status_label || plan.status)}</span>
+      </span>
+      <span class="card-row muted">${escapeHtml(plan.window_start_date)} - ${escapeHtml(plan.window_end_date)}</span>
+      <span class="card-row muted">${escapeHtml(String(plan.items?.length || 0))} встреч • конфликтов ${escapeHtml(String(plan.conflicts?.length || 0))}</span>
+    </button>
+  `).join('');
+  for (const button of routePlanListEl.querySelectorAll('[data-route-plan-id]')) {
+    button.addEventListener('click', () => {
+      state.selectedRoutePlanId = button.dataset.routePlanId;
+      renderRoutePlanList();
+      renderRoutePlanDetail(state.routePlans.find((plan) => plan.plan_id === state.selectedRoutePlanId));
+    });
+  }
+  renderRoutePlanDetail(state.routePlans.find((plan) => plan.plan_id === state.selectedRoutePlanId) || state.routePlans[0]);
+}
+
+function renderRoutePlanDetail(plan) {
+  if (!routePlanDetailEl) return;
+  if (!plan) {
+    routePlanDetailEl.innerHTML = '<p class="subtitle">Маршрут не выбран.</p>';
+    return;
+  }
+  routePlanDetailEl.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <p class="eyebrow">Маршрут</p>
+        <h2>${escapeHtml(plan.patient?.full_name || 'Пациент')}</h2>
+        <p class="subtitle">${escapeHtml(plan.window_start_date)} - ${escapeHtml(plan.window_end_date)} • ${escapeHtml(String(plan.planning_window_days))} дней</p>
+      </div>
+      <span class="status-chip">${escapeHtml(plan.status_label || plan.status)}</span>
+    </div>
+    <div class="analysis-grid">
+      ${(plan.items || []).map((item) => `
+        <article class="analysis-card">
+          <strong>${escapeHtml(item.service_name)}</strong>
+          <p>${escapeHtml(item.date)} ${escapeHtml(item.start_time)} - ${escapeHtml(item.end_time)}</p>
+          <p>${escapeHtml(item.provider_name)} • ${escapeHtml(item.status_label || item.status)}</p>
+          <p>${escapeHtml(item.reason || '')}</p>
+          ${item.result_note ? `<p>Результат: ${escapeHtml(item.result_note)}</p>` : ''}
+        </article>
+      `).join('')}
+    </div>
+    ${plan.conflicts?.length ? `<p class="helper-text">Конфликты: ${escapeHtml(String(plan.conflicts.length))}. Исправьте в песочнице перед подтверждением.</p>` : ''}
+    <div class="detail-actions">
+      <button id="importRoutePlan" class="primary-button" type="button">Добавить в чат</button>
+      ${plan.status === 'draft' ? `<button id="confirmRoutePlan" class="ghost-button" type="button">Подтвердить</button>` : ''}
+    </div>
+  `;
+  document.querySelector('#importRoutePlan')?.addEventListener('click', () => {
+    const note = routeContextText();
+    appendMessage({ role: 'assistant', title: 'Маршрут пациента', body: note });
+    setActiveView('chat');
+  });
+  document.querySelector('#confirmRoutePlan')?.addEventListener('click', async () => {
+    const result = await send({ type: 'care-plan-confirm', planId: plan.plan_id });
+    if (!result.ok) throw new Error(result.error || `Конфликты: ${result.conflicts?.length || 0}`);
+    await loadRoutePlans();
+    setStatus('Маршрут подтвержден.');
+  });
+}
+
+async function loadRoutePlans({ silent = false } = {}) {
+  const context = state.latestScreenContext || (await send({ type: 'refresh-context' }).catch(() => null))?.screenContext || {};
+  state.latestScreenContext = context;
+  const result = await send({
+    type: 'care-plans',
+    patientId: context.selected_patient_id || ''
+  });
+  if (!result.ok) throw new Error(result.error || 'Не удалось загрузить маршруты.');
+  state.routePlans = result.carePlans || [];
+  if (!state.routePlans.some((plan) => plan.plan_id === state.selectedRoutePlanId)) {
+    state.selectedRoutePlanId = state.routePlans[0]?.plan_id || '';
+  }
+  renderRoutePlanList();
+  if (!silent) setStatus('Маршруты обновлены.');
+}
+
+async function suggestRoutePlan() {
+  const context = (await send({ type: 'refresh-context' })).screenContext || {};
+  state.latestScreenContext = context;
+  if (!context.selected_appointment_id || !context.selected_patient_id) {
+    throw new Error('Откройте форму приёма пациента, чтобы предложить маршрут.');
+  }
+  const result = await send({
+    type: 'care-plan-suggest',
+    patientId: context.selected_patient_id,
+    appointmentId: context.selected_appointment_id,
+    planningWindowDays: 9
+  });
+  if (!result.ok) throw new Error(result.error || 'Не удалось предложить маршрут.');
+  state.selectedRoutePlanId = result.plan.plan_id;
+  await loadRoutePlans();
+  setStatus('Draft-маршрут на 9 дней подготовлен.');
 }
 
 function formatWhatsAppAnalysis(intake) {
@@ -340,20 +476,10 @@ function renderWhatsAppDoctor(doctor) {
 function buildWhatsAppQuestionnaireText(doctor) {
   const token = doctor?.qr_token || '';
   return [
-    token,
+    'Начнем консультацию.',
+    `Код врача: ${token}`,
     '',
-    'Начнем консультацию. Анкета для врача. Ответьте одним сообщением, заполните строки после двоеточия:',
-    'ФИО пациента: ',
-    'ИИН: ',
-    'Телефон: ',
-    'Жалоба / что беспокоит: ',
-    'Когда началось: ',
-    'Где сильнее проявляется: ',
-    'Речь, внимание, обучение, игра: ',
-    'Сон, аппетит, тревожность, истерики: ',
-    'Что помогает: ',
-    'Красные флаги: судороги, резкое ухудшение, самоповреждение, опасное поведение? ',
-    'Фото/документы: можно отправить отдельным сообщением после этой анкеты.'
+    'Отправьте этот код ответом в WhatsApp. После этого бот задаст вопросы по одному: сначала ИИН, потом ФИО, телефон, жалобу, уточнения и фото.'
   ].join('\n');
 }
 
@@ -375,7 +501,7 @@ async function copyWhatsAppQuestionnaire() {
   if (!text) return;
   await navigator.clipboard.writeText(text);
   if (whatsappTestStatusEl) {
-    whatsappTestStatusEl.textContent = 'Анкета скопирована. После hello_world пациент может вставить её одним сообщением в WhatsApp.';
+    whatsappTestStatusEl.textContent = 'Сообщение скопировано. Пациент отправляет код, затем бот задаёт вопросы по одному.';
   }
 }
 
@@ -1350,6 +1476,13 @@ async function refreshContext({ silent = false } = {}) {
     const result = await send({ type: 'refresh-context' });
     if (!result.ok) throw new Error(result.error || 'Не удалось определить экран.');
     state.latestScreenContext = result.screenContext;
+    if (state.voiceMode === 'dialogue') {
+      appendMessage({
+        role: 'assistant',
+        title: 'Диалог приёма',
+        body: 'Режим диалога включен: команды не выполняются, после остановки сохраню только текст и предложения.'
+      });
+    }
     await loadWorkspaceData({ screenContext: result.screenContext, silent: true });
     const label = screenLabel(result.screenContext);
     setStatus(label);
@@ -1482,7 +1615,7 @@ async function fetchAdvisorDirect(question) {
 async function askAdvisor(question, { quietUserMessage = false, title = 'Советчик' } = {}) {
   const text = String(question || '').trim();
   if (!text) return { ok: false, error: 'empty_question' };
-  const advisorQuestion = `${text}${importedIntakeContextText()}`;
+  const advisorQuestion = `${text}${importedIntakeContextText()}${routeContextText()}`;
   if (!quietUserMessage) {
     appendMessage({ role: 'user', title: 'Врач', body: text });
   }
@@ -1567,6 +1700,12 @@ async function handleVoiceCommand(text, { fromRecording = false, sttConfidence =
 async function routeSpokenText(text, { fromRecording = false, sttConfidence = null, speakerTag = null } = {}) {
   const normalized = normalizeSpeech(text);
   if (!normalized) return;
+  if (fromRecording && state.voiceMode === 'dialogue') {
+    state.dialogueTranscriptParts.push(text.trim());
+    chatInputEl.value = state.dialogueTranscriptParts.join(' ');
+    setStatus('Диалог приёма записывается. Команды не выполняются до остановки.');
+    return;
+  }
   if (looksLikeVoiceCommand(normalized)) {
     return handleVoiceCommand(text, { fromRecording, sttConfidence, speakerTag });
   }
@@ -1912,6 +2051,8 @@ async function startElevenLabsRealtime() {
 }
 
 async function startRecording() {
+  state.dialogueTranscriptParts = [];
+  state.dialogueRecordingStartedAt = Date.now();
   setRecordingUi(true, 'Проверяю форму и запускаю запись.');
   try {
     const result = await send({ type: 'start-live-session' });
@@ -1997,6 +2138,31 @@ async function stopRecording() {
       recognition.stop();
     }
     await stopRealtimeAudioOnly();
+    if (state.voiceMode === 'dialogue') {
+      const transcriptText = state.dialogueTranscriptParts.join(' ').trim() || chatInputEl.value.trim();
+      if (transcriptText) {
+        const durationSec = Math.max(0, Math.round((Date.now() - (state.dialogueRecordingStartedAt || Date.now())) / 1000));
+        const saveResult = await send({
+          type: 'dialogue-transcript-save',
+          appointmentId: state.latestScreenContext?.selected_appointment_id || '',
+          patientId: state.latestScreenContext?.selected_patient_id || '',
+          transcript: transcriptText,
+          durationSec
+        });
+        if (saveResult.ok) {
+          const analysis = saveResult.transcript?.analysis || {};
+          appendMessage({
+            role: 'assistant',
+            title: 'Диалог сохранен',
+            body: analysis.summary || 'Текст диалога сохранен, аудио не хранится.',
+            cards: [
+              { title: 'Что уточнить', text: (analysis.follow_up_questions || []).map((item) => `- ${item}`).join('\n') },
+              { title: 'Маршрут', text: (analysis.care_plan_updates || []).map((item) => `- ${item}`).join('\n') }
+            ].filter((card) => card.text)
+          });
+        }
+      }
+    }
     if (state.currentSession) {
       const result = await send({ type: 'stop-live-session' });
       if (!result.ok) throw new Error(result.error || 'Не удалось остановить запись.');
@@ -2054,6 +2220,13 @@ function initEvents() {
   toolsToggleEl.addEventListener('click', () => setToolsMenuOpen(toolsMenuEl.hidden));
   advisorModePillEl.addEventListener('click', () => setAdvisorMode(!state.advisorModeEnabled));
   toggleAdvisorModeEl.addEventListener('click', () => setAdvisorMode(!state.advisorModeEnabled));
+  voiceModeSelectEl?.addEventListener('change', (event) => {
+    state.voiceMode = event.target.value === 'dialogue' ? 'dialogue' : 'navigation';
+    localStorage.setItem('damumed-voice-mode', state.voiceMode);
+    setStatus(state.voiceMode === 'dialogue'
+      ? 'Голосовой режим: Диалог приёма. Команды не выполняются до остановки.'
+      : 'Голосовой режим: Навигация. Команды выполняются в live-режиме.');
+  });
   document.querySelector('#clearChat').addEventListener('click', clearChat);
   document.querySelector('#exampleDoctor').addEventListener('click', () => {
     document.querySelector('#speakerTag').value = 'doctor';
@@ -2077,6 +2250,8 @@ function initEvents() {
   for (const button of viewTabEls) {
     button.addEventListener('click', () => setActiveView(button.dataset.view));
   }
+  refreshRoutePlansEl?.addEventListener('click', () => loadRoutePlans().catch(showError));
+  suggestRoutePlanEl?.addEventListener('click', () => suggestRoutePlan().catch(showError));
   whatsappDoctorSelectEl.addEventListener('change', async (event) => {
     state.whatsappSelectedDoctorId = event.target.value;
     localStorage.setItem('damumed-whatsapp-doctor-id', state.whatsappSelectedDoctorId);
@@ -2118,6 +2293,8 @@ function initEvents() {
 function init() {
   setTheme(localStorage.getItem('damumed-assistant-theme') || 'light');
   state.whatsappSelectedDoctorId = localStorage.getItem('damumed-whatsapp-doctor-id') || '';
+  state.voiceMode = localStorage.getItem('damumed-voice-mode') === 'dialogue' ? 'dialogue' : 'navigation';
+  if (voiceModeSelectEl) voiceModeSelectEl.value = state.voiceMode;
   updateAdvisorUi();
   renderWorkspaceDeck();
   initEvents();

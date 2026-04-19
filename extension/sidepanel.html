@@ -19,6 +19,7 @@
 
       <nav class="view-tabs" aria-label="Разделы расширения">
         <button class="view-tab is-active" type="button" data-view="chat">Чат</button>
+        <button class="view-tab" type="button" data-view="route">Маршрут</button>
         <button class="view-tab" type="button" data-view="whatsapp">WhatsApp</button>
       </nav>
 
@@ -110,6 +111,11 @@
                 <button id="toolsToggle" class="control-button plus-button" type="button" aria-label="Открыть меню" aria-expanded="false">+</button>
                 <div id="toolsMenu" class="tools-menu" hidden>
                   <button id="toggleAdvisorMode" class="menu-item" type="button">Включить режим советчика</button>
+                  <label class="menu-label" for="voiceModeSelect">Голосовой режим</label>
+                  <select id="voiceModeSelect" class="menu-select" aria-label="Голосовой режим">
+                    <option value="navigation">Навигация</option>
+                    <option value="dialogue">Диалог приёма</option>
+                  </select>
                   <button id="clearChat" class="menu-item danger" type="button">Очистить чат</button>
                   <label class="menu-label" for="speakerTag">Кто говорит</label>
                   <select id="speakerTag" class="menu-select" aria-label="Кто говорит">
@@ -154,6 +160,24 @@
         </form>
       </section>
 
+      <section id="routeView" class="whatsapp-view main-view" hidden>
+        <div class="whatsapp-panel">
+          <div>
+            <p class="eyebrow">Care plan</p>
+            <h2>Маршрут пациента</h2>
+            <p class="subtitle">Draft-план, конфликты и статусы вторичных врачей из общего backend runtime.</p>
+          </div>
+          <div class="search-row">
+            <button id="refreshRoutePlans" class="ghost-button" type="button">Обновить</button>
+            <button id="suggestRoutePlan" class="primary-button" type="button">Предложить 9 дней</button>
+          </div>
+          <div id="routePlanList" class="intake-list"></div>
+        </div>
+        <div id="routePlanDetail" class="whatsapp-panel intake-detail">
+          <p class="subtitle">Откройте форму приёма или выберите маршрут, чтобы увидеть план и статусы.</p>
+        </div>
+      </section>
+
       <section id="whatsappView" class="whatsapp-view main-view" hidden>
         <div class="whatsapp-panel">
           <div>
@@ -175,9 +199,9 @@
               <code id="whatsappDoctorToken" class="token-chip">...</code>
               <button id="copyWhatsappToken" class="ghost-button" type="button">Скопировать token</button>
             </div>
-            <label class="field-label" for="whatsappQuestionnaireText">Сообщение-анкета одним ответом</label>
+            <label class="field-label" for="whatsappQuestionnaireText">Сообщение для запуска пошаговой анкеты</label>
             <textarea id="whatsappQuestionnaireText" class="questionnaire-textarea" readonly></textarea>
-            <button id="copyWhatsappQuestionnaire" class="ghost-button" type="button">Скопировать анкету</button>
+            <button id="copyWhatsappQuestionnaire" class="ghost-button" type="button">Скопировать сообщение</button>
             <label class="field-label" for="whatsappTestPhone">Тестовый номер пациента</label>
             <div class="search-row">
               <input id="whatsappTestPhone" class="field-control" type="tel" placeholder="Например 13124683054" />

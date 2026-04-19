@@ -20,6 +20,15 @@ const state = {
     result: null,
     loading: false,
     error: ''
+  },
+  carePlan: {
+    plans: [],
+    activePlan: null,
+    planningWindowDays: 9,
+    providerTasks: [],
+    providerTaskStatus: 'all',
+    loading: false,
+    error: ''
   }
 };
 
@@ -192,6 +201,131 @@ async function api(path, options = {}) {
   return response.text();
 }
 
+async function loadCarePlans(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.patientId) params.set('patientId', filters.patientId);
+  if (filters.primaryProviderId) params.set('primaryProviderId', filters.primaryProviderId);
+  if (filters.status) params.set('status', filters.status);
+  const payload = await api(`/api/care-plans?${params.toString()}`);
+  state.carePlan.plans = payload.carePlans || [];
+  const activePlanId = state.carePlan.activePlan?.plan_id;
+  state.carePlan.activePlan = state.carePlan.plans.find((plan) => plan.plan_id === activePlanId)
+    || state.carePlan.plans[0]
+    || null;
+  return state.carePlan.plans;
+}
+
+async function suggestCarePlanForCurrentPatient() {
+  const appointmentId = state.route.appointmentId;
+  const patientId = state.appointmentBundle?.patient?.patient_id;
+  if (!appointmentId || !patientId) return;
+  state.carePlan.loading = true;
+  state.carePlan.error = '';
+  state.toast = 'ИИ готовит маршрут пациента. Слоты пока не заняты.';
+  render();
+  try {
+    const payload = await api('/api/care-plans/suggest', {
+      method: 'POST',
+      body: JSON.stringify({
+        patientId,
+        appointmentId,
+        planningWindowDays: state.carePlan.planningWindowDays
+      })
+    });
+    state.carePlan.activePlan = payload.plan;
+    await loadCarePlans({ patientId });
+    state.toast = `Маршрут на ${payload.plan.planning_window_days} дней подготовлен. Проверьте и подтвердите расписание.`;
+  } catch (error) {
+    state.carePlan.error = error.message || 'Не удалось подготовить маршрут.';
+  } finally {
+    state.carePlan.loading = false;
+    render();
+  }
+}
+
+async function patchCarePlanItem(planId, itemId, patch) {
+  const payload = await api(`/api/care-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch)
+  });
+  state.carePlan.activePlan = payload.plan;
+  await loadCarePlans({ patientId: payload.plan.patient_id });
+  render();
+}
+
+async function addCarePlanItem(planId) {
+  const provider = (state.bootstrap?.providers || []).find((item) => item.care_role !== 'primary') || state.bootstrap?.providers?.[0];
+  const payload = await api(`/api/care-plans/${encodeURIComponent(planId)}/items`, {
+    method: 'POST',
+    body: JSON.stringify({
+      provider_id: provider?.provider_id,
+      date: state.carePlan.activePlan?.window_start_date || state.scheduleDay?.date,
+      start_time: '10:00',
+      duration_min: 30,
+      service_name: 'Консультация специалиста',
+      reason: 'Добавлено первичным врачом.'
+    })
+  });
+  state.carePlan.activePlan = payload.plan;
+  await loadCarePlans({ patientId: payload.plan.patient_id });
+  render();
+}
+
+async function deleteCarePlanItem(planId, itemId) {
+  const payload = await api(`/api/care-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/delete`, {
+    method: 'POST'
+  });
+  state.carePlan.activePlan = payload.plan;
+  await loadCarePlans({ patientId: payload.plan.patient_id });
+  render();
+}
+
+async function confirmActiveCarePlan() {
+  const plan = state.carePlan.activePlan;
+  if (!plan) return;
+  state.carePlan.loading = true;
+  state.carePlan.error = '';
+  render();
+  try {
+    const result = await api(`/api/care-plans/${encodeURIComponent(plan.plan_id)}/confirm`, { method: 'POST' });
+    state.carePlan.activePlan = result.plan;
+    state.toast = result.ok
+      ? 'Расписание подтверждено. Вторичные врачи получили задачи.'
+      : `Есть конфликты: ${result.conflicts.length}. Исправьте слоты перед подтверждением.`;
+    await loadCarePlans({ patientId: result.plan.patient_id });
+    await loadSchedule(state.scheduleDay?.date || state.bootstrap?.currentDate, state.statusFilter);
+  } catch (error) {
+    state.carePlan.error = error.message || 'Не удалось подтвердить маршрут.';
+  } finally {
+    state.carePlan.loading = false;
+    render();
+  }
+}
+
+async function loadProviderTasks(providerId = state.providerId) {
+  if (!providerId) return [];
+  const params = new URLSearchParams({ providerId });
+  if (state.carePlan.providerTaskStatus !== 'all') params.set('status', state.carePlan.providerTaskStatus);
+  const payload = await api(`/api/providers/tasks?${params.toString()}`);
+  state.carePlan.providerTasks = payload.tasks || [];
+  return state.carePlan.providerTasks;
+}
+
+async function updateProviderTask(taskId, status) {
+  const note = status === 'completed'
+    ? window.prompt('Короткий результат для первичного врача:', '') || ''
+    : '';
+  await api(`/api/provider-tasks/${encodeURIComponent(taskId)}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status, resultNote: note })
+  });
+  state.toast = 'Статус вторичного врача обновлен.';
+  await loadProviderTasks();
+  await loadCarePlans();
+  await loadSchedule(state.scheduleDay?.date || state.bootstrap?.currentDate, state.statusFilter);
+  render();
+}
+
 function routeFromHash() {
   const hash = window.location.hash.replace(/^#/, '') || '/schedule';
   const parts = hash.split('/').filter(Boolean);
@@ -214,6 +348,8 @@ async function bootstrap() {
   state.sourceOfTruth = payload.sourceOfTruth;
   state.scheduleGenerator.startDate = payload.scheduleDay?.date || payload.currentDate || '';
   await loadScheduleGeneratorPatients(payload.patients || []);
+  await loadCarePlans();
+  await loadProviderTasks(state.providerId);
   await refreshAudit();
   if (state.route.screen === 'inspection' && state.route.appointmentId) {
     await loadInspection(state.route.appointmentId);
@@ -279,6 +415,7 @@ async function loadInspection(appointmentId) {
   state.activeTab ||= 'inspection';
   state.scheduleGenerator.result = null;
   state.scheduleGenerator.error = '';
+  await loadCarePlans({ patientId: payload.patient?.patient_id || '' });
   await loadHints('inspection', appointmentId);
   render();
 }
@@ -470,14 +607,19 @@ async function saveInspection(closeAfter) {
     body: JSON.stringify(payload)
   });
   await refreshAudit();
+  if (response.carePlan) {
+    response.autoSchedule = response.carePlan.error
+      ? { error: response.carePlan.error }
+      : { applied: response.carePlan.items || [] };
+  }
 
   // Module 3: Smart Scheduling — server auto-generates schedule on primary visit
-  if (response.autoSchedule && !response.autoSchedule.error) {
-    state.scheduleGenerator.result = response.autoSchedule;
+  if (response.carePlan && !response.carePlan.error) {
+    state.carePlan.activePlan = response.carePlan;
     state.scheduleWindow = response.scheduleWindow || state.scheduleWindow;
-    state.toast = `Запись сохранена. ИИ автоматически сформировал расписание на 9 рабочих дней (${response.autoSchedule.applied?.length || 0} занятий назначено).`;
+    state.toast = `Запись сохранена. ИИ подготовил draft-маршрут на ${response.carePlan.planning_window_days} дней, подтвердите его вручную.`;
   } else if (response.autoSchedule?.error) {
-    state.toast = 'Запись сохранена, но авто-расписание не удалось: ' + response.autoSchedule.error;
+    state.toast = 'Запись сохранена, но маршрут не удалось подготовить: ' + response.autoSchedule.error;
   } else {
     state.toast = 'Запись сохранена. Статус обновлен на «Выполнено».';
   }
@@ -598,6 +740,149 @@ function renderGeneratedPsychologistSchedule(result) {
   `;
 }
 
+function providerOptions(currentProviderId) {
+  return (state.bootstrap?.providers || [])
+    .filter((provider) => provider.care_role !== 'primary')
+    .map((provider) => `<option value="${escapeHtml(provider.provider_id)}" ${provider.provider_id === currentProviderId ? 'selected' : ''}>${escapeHtml(provider.schedule_name || provider.full_name)}</option>`)
+    .join('');
+}
+
+function renderCarePlanPanel() {
+  const plan = state.carePlan.activePlan;
+  const providers = state.bootstrap?.providers || [];
+  const canEdit = plan?.status === 'draft';
+  const patientId = state.appointmentBundle?.patient?.patient_id || state.scheduleGenerator.patientId;
+  const conflicts = plan?.conflicts || [];
+
+  return `
+    <section class="card care-plan-card">
+      <div class="care-plan-head">
+        <div>
+          <h3>Маршрут пациента</h3>
+          <p class="overview-copy">ИИ предлагает расписание, первичный врач редактирует и подтверждает. Слоты занимаютcя только после подтверждения.</p>
+        </div>
+        <div class="meta-list">
+          <label class="care-window-toggle">
+            <span>Горизонт</span>
+            <select id="carePlanWindowDays">
+              <option value="9" ${state.carePlan.planningWindowDays === 9 ? 'selected' : ''}>9 дней</option>
+              <option value="7" ${state.carePlan.planningWindowDays === 7 ? 'selected' : ''}>7 дней</option>
+            </select>
+          </label>
+          <button class="button" data-action="suggest-care-plan" ${state.carePlan.loading || !patientId ? 'disabled' : ''}>
+            ${state.carePlan.loading ? 'Готовлю...' : 'Предложить маршрут'}
+          </button>
+        </div>
+      </div>
+
+      ${state.carePlan.error ? `<div class="scheduler-error">${escapeHtml(state.carePlan.error)}</div>` : ''}
+      ${plan ? `
+        <div class="care-plan-summary">
+          <span class="meta-pill">${escapeHtml(plan.status_label || plan.status)}</span>
+          <span class="meta-pill">${escapeHtml(plan.window_start_date)} - ${escapeHtml(plan.window_end_date)}</span>
+          <span class="meta-pill">${escapeHtml(String(plan.items?.length || 0))} назначений</span>
+          ${conflicts.length ? `<span class="status-pill cancelled">Конфликты: ${escapeHtml(String(conflicts.length))}</span>` : '<span class="status-pill completed">Конфликтов нет</span>'}
+        </div>
+
+        <div class="care-plan-items">
+          ${(plan.items || []).map((item) => `
+            <article class="care-plan-item ${conflicts.some((conflict) => conflict.item_id === item.item_id) ? 'has-conflict' : ''}">
+              <div class="care-item-grid">
+                <label>
+                  <span>Специалист</span>
+                  <select data-care-plan-field="provider_id" data-plan-id="${escapeHtml(plan.plan_id)}" data-item-id="${escapeHtml(item.item_id)}" ${canEdit ? '' : 'disabled'}>
+                    ${providerOptions(item.provider_id)}
+                  </select>
+                </label>
+                <label>
+                  <span>Дата</span>
+                  <input type="date" value="${escapeHtml(item.date)}" data-care-plan-field="date" data-plan-id="${escapeHtml(plan.plan_id)}" data-item-id="${escapeHtml(item.item_id)}" ${canEdit ? '' : 'disabled'} />
+                </label>
+                <label>
+                  <span>Время</span>
+                  <input type="time" value="${escapeHtml(item.start_time)}" data-care-plan-field="start_time" data-plan-id="${escapeHtml(plan.plan_id)}" data-item-id="${escapeHtml(item.item_id)}" ${canEdit ? '' : 'disabled'} />
+                </label>
+                <label>
+                  <span>Минуты</span>
+                  <select data-care-plan-field="duration_min" data-plan-id="${escapeHtml(plan.plan_id)}" data-item-id="${escapeHtml(item.item_id)}" ${canEdit ? '' : 'disabled'}>
+                    <option value="30" ${Number(item.duration_min) === 30 ? 'selected' : ''}>30</option>
+                    <option value="40" ${Number(item.duration_min) === 40 ? 'selected' : ''}>40</option>
+                    <option value="60" ${Number(item.duration_min) === 60 ? 'selected' : ''}>60</option>
+                  </select>
+                </label>
+              </div>
+              <div class="care-item-body">
+                <strong>${escapeHtml(item.service_name)}</strong>
+                <span class="status-pill ${escapeHtml(item.status)}">${escapeHtml(item.status_label || item.status)}</span>
+                <p>${escapeHtml(item.reason || '')}</p>
+                ${item.result_note ? `<p class="task-note">Результат: ${escapeHtml(item.result_note)}</p>` : ''}
+              </div>
+              ${canEdit ? `
+                <div class="slot-actions">
+                  <button class="ghost-button" data-action="delete-care-plan-item" data-plan-id="${escapeHtml(plan.plan_id)}" data-item-id="${escapeHtml(item.item_id)}">Удалить</button>
+                </div>
+              ` : ''}
+            </article>
+          `).join('')}
+        </div>
+
+        <div class="inline-actions">
+          ${canEdit ? `<button class="secondary-button" data-action="add-care-plan-item" data-plan-id="${escapeHtml(plan.plan_id)}">Добавить встречу</button>` : ''}
+          ${canEdit ? `<button class="button" data-action="confirm-care-plan" data-plan-id="${escapeHtml(plan.plan_id)}" ${conflicts.length ? 'disabled' : ''}>Подтвердить расписание</button>` : ''}
+        </div>
+
+        ${conflicts.length ? `
+          <div class="scheduler-unassigned">
+            <h4>Конфликты</h4>
+            <ul class="scheduler-unassigned-list">
+              ${conflicts.map((conflict) => `<li>${escapeHtml(conflict.message || conflict.type)}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+      ` : '<p class="overview-copy">Маршрут еще не создан. Сохраните приём или нажмите “Предложить маршрут”.</p>'}
+    </section>
+  `;
+}
+
+function renderProviderTasksPanel() {
+  const providers = state.bootstrap?.providers || [];
+  const tasks = state.carePlan.providerTasks || [];
+  return `
+    <section class="card provider-tasks-card">
+      <div class="care-plan-head">
+        <div>
+          <h3>Задачи вторичного врача</h3>
+          <p class="overview-copy">Вторичный специалист отмечает выполнение, а первичный врач видит статус в маршруте пациента.</p>
+        </div>
+        <div class="meta-list">
+          <select id="providerTaskSelect">
+            ${providers.filter((provider) => provider.care_role !== 'primary').map((provider) => `<option value="${escapeHtml(provider.provider_id)}" ${provider.provider_id === state.providerId ? 'selected' : ''}>${escapeHtml(provider.schedule_name || provider.full_name)}</option>`).join('')}
+          </select>
+          <button class="ghost-button" data-action="refresh-provider-tasks">Обновить</button>
+        </div>
+      </div>
+      <div class="task-list">
+        ${tasks.length ? tasks.map((task) => `
+          <article class="task-card">
+            <div>
+              <strong>${escapeHtml(formatPersonName(task.patient?.full_name || 'Пациент'))}</strong>
+              <p class="slot-subtitle">${escapeHtml(task.date)} ${escapeHtml(task.start_time)} - ${escapeHtml(task.end_time)} • ${escapeHtml(task.service_name)}</p>
+              <p>${escapeHtml(task.reason || '')}</p>
+              ${task.result_note ? `<p class="task-note">Комментарий: ${escapeHtml(task.result_note)}</p>` : ''}
+            </div>
+            <div class="task-actions">
+              <span class="status-pill ${escapeHtml(task.status)}">${escapeHtml(task.status_label || task.status)}</span>
+              <button class="ghost-button" data-action="provider-task-status" data-task-id="${escapeHtml(task.item_id)}" data-status="in_progress">В работе</button>
+              <button class="button" data-action="provider-task-status" data-task-id="${escapeHtml(task.item_id)}" data-status="completed">Выполнено</button>
+              <button class="ghost-button" data-action="provider-task-status" data-task-id="${escapeHtml(task.item_id)}" data-status="missed">Не явился</button>
+            </div>
+          </article>
+        `).join('') : '<p class="overview-copy">У выбранного специалиста пока нет задач из маршрутов.</p>'}
+      </div>
+    </section>
+  `;
+}
+
 function getVisibleScheduleSlots() {
   const slots = state.scheduleDay?.slots || [];
   if (!state.providerId) return slots;
@@ -682,6 +967,7 @@ function renderBoard() {
   return `
     ${renderPsychologistSchedulePanel('board')}
     ${renderScheduleOverview('board')}
+    ${renderProviderTasksPanel()}
     <section class="card board-card" data-screen="board">
       <div class="controls board-controls">
         <div class="field-group wide">
@@ -855,6 +1141,7 @@ function renderInspection() {
             </section>
           `).join('')}
         </div>
+        ${renderCarePlanPanel()}
         <div class="inline-actions" style="margin-top: 16px;">
           <button id="btnSaveInspectionResult" type="button" class="button" data-action="save-inspection">Сохранить</button>
           <button id="btnSaveAndCloseInspectionResult" type="button" class="secondary-button" data-action="save-close-inspection">Сохранить и закрыть</button>
@@ -1059,7 +1346,26 @@ document.addEventListener('click', async (event) => {
     await generatePsychologistScheduleRequest();
   }
   if (action === 'generate-schedule-from-inspection') {
-    await generateScheduleForCurrentPatient();
+    await suggestCarePlanForCurrentPatient();
+  }
+  if (action === 'suggest-care-plan') {
+    await suggestCarePlanForCurrentPatient();
+  }
+  if (action === 'add-care-plan-item') {
+    await addCarePlanItem(target.dataset.planId);
+  }
+  if (action === 'delete-care-plan-item') {
+    await deleteCarePlanItem(target.dataset.planId, target.dataset.itemId);
+  }
+  if (action === 'confirm-care-plan') {
+    await confirmActiveCarePlan();
+  }
+  if (action === 'refresh-provider-tasks') {
+    await loadProviderTasks();
+    render();
+  }
+  if (action === 'provider-task-status') {
+    await updateProviderTask(target.dataset.taskId, target.dataset.status);
   }
   if (action === 'select-schedule-day') {
     const nextDate = target.dataset.date;
@@ -1119,7 +1425,22 @@ document.addEventListener('change', async (event) => {
   }
   if (target.id === 'cmbGridSchedules') {
     state.providerId = target.value;
+    await loadProviderTasks(state.providerId);
     render();
+  }
+  if (target.id === 'providerTaskSelect') {
+    state.providerId = target.value;
+    await loadProviderTasks(state.providerId);
+    render();
+  }
+  if (target.id === 'carePlanWindowDays') {
+    state.carePlan.planningWindowDays = Number(target.value) === 7 ? 7 : 9;
+    render();
+  }
+  if (target.dataset.carePlanField) {
+    await patchCarePlanItem(target.dataset.planId, target.dataset.itemId, {
+      [target.dataset.carePlanField]: target.value
+    });
   }
   if (target.id === 'dpCalendarDate' || target.id === 'boardDate') {
     await api('/api/current-date', { method: 'POST', body: JSON.stringify({ date: target.value }) });

@@ -6,8 +6,8 @@
       "patient": "/mnt/data/unzipped/patient",
       "history": "/mnt/data/unzipped/history"
     },
-    "consultDir": "C:\\Users\\User\\Downloads\\Консультация и диагностика",
-    "patientDir": "C:\\Users\\User\\Downloads\\Консультация и диагностика",
+    "consultDir": "C:\\Users\\User\\Downloads\\РљРѕРЅСЃСѓР»СЊС‚Р°С†РёСЏ Рё РґРёР°РіРЅРѕСЃС‚РёРєР°",
+    "patientDir": "C:\\Users\\User\\Downloads\\РљРѕРЅСЃСѓР»СЊС‚Р°С†РёСЏ Рё РґРёР°РіРЅРѕСЃС‚РёРєР°",
     "historyPath": "C:\\Users\\User\\Desktop\\AIS\\patapim4iki\\.tmp_history_zip",
     "usingFallbacks": {
       "consult": true,

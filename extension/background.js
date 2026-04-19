@@ -104,6 +104,19 @@ async function postJson(path, body) {
   return payload;
 }
 
+async function patchJson(path, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || payload.details || `Backend request failed: ${response.status}`);
+  }
+  return payload;
+}
+
 async function getJson(path) {
   const response = await fetch(`${API_BASE}${path}`);
   const payload = await response.json();
@@ -166,6 +179,63 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse(await postJson(`/api/whatsapp/intakes/${encodeURIComponent(message.intakeId)}/status`, {
         doctorId: message.doctorId,
         status: message.status
+      }));
+      return;
+    }
+
+    if (message.type === 'care-plans') {
+      const params = new URLSearchParams({
+        patientId: message.patientId || '',
+        primaryProviderId: message.primaryProviderId || '',
+        status: message.status || ''
+      });
+      sendResponse(await getJson(`/api/care-plans?${params.toString()}`));
+      return;
+    }
+
+    if (message.type === 'care-plan-suggest') {
+      sendResponse(await postJson('/api/care-plans/suggest', {
+        patientId: message.patientId,
+        appointmentId: message.appointmentId,
+        planningWindowDays: message.planningWindowDays || 9
+      }));
+      return;
+    }
+
+    if (message.type === 'care-plan-update-item') {
+      sendResponse(await patchJson(`/api/care-plans/${encodeURIComponent(message.planId)}/items/${encodeURIComponent(message.itemId)}`, message.patch || {}));
+      return;
+    }
+
+    if (message.type === 'care-plan-confirm') {
+      sendResponse(await postJson(`/api/care-plans/${encodeURIComponent(message.planId)}/confirm`, {}));
+      return;
+    }
+
+    if (message.type === 'provider-tasks') {
+      const params = new URLSearchParams({
+        providerId: message.providerId || '',
+        status: message.status || ''
+      });
+      sendResponse(await getJson(`/api/providers/tasks?${params.toString()}`));
+      return;
+    }
+
+    if (message.type === 'provider-task-status') {
+      sendResponse(await postJson(`/api/provider-tasks/${encodeURIComponent(message.taskId)}/status`, {
+        status: message.status,
+        resultNote: message.resultNote || ''
+      }));
+      return;
+    }
+
+    if (message.type === 'dialogue-transcript-save') {
+      sendResponse(await postJson('/api/dialogue-transcripts', {
+        appointmentId: message.appointmentId || '',
+        patientId: message.patientId || '',
+        transcript: message.transcript || '',
+        durationSec: message.durationSec || 0,
+        source: 'extension'
       }));
       return;
     }

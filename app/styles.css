@@ -882,3 +882,106 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.care-plan-card,
+.provider-tasks-card {
+  margin-top: 16px;
+}
+
+.care-plan-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.care-window-toggle {
+  display: grid;
+  gap: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.care-window-toggle select,
+.care-item-grid select,
+.care-item-grid input,
+#providerTaskSelect {
+  min-height: 38px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.care-plan-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.care-plan-items,
+.task-list {
+  display: grid;
+  gap: 12px;
+}
+
+.care-plan-item,
+.task-card {
+  padding: 14px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.care-plan-item.has-conflict {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.care-item-grid {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.4fr) repeat(3, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.care-item-grid label {
+  display: grid;
+  gap: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.care-item-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.care-item-body p,
+.task-card p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.task-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: start;
+  gap: 8px;
+}
+
+.task-note {
+  color: #0f766e !important;
+  font-weight: 700;
+}

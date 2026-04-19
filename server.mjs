@@ -33,6 +33,20 @@ import { buildPatientPresets, getPatientAssets, registerPatientAsset } from './l
 import { createIntakeStore } from './lib/intake-db.mjs';
 import { handleWhatsAppWebhook, sendWhatsAppMessage, sendWhatsAppTemplate, verifyWhatsAppWebhook } from './lib/whatsapp-cloud.mjs';
 import { buildPsychologistsFromRuntime, generatePsychologistSchedule } from './lib/scheduler.mjs';
+import {
+  addCarePlanItem,
+  carePlanSummaryText,
+  confirmCarePlan,
+  deleteCarePlanItem,
+  findScheduleConflicts,
+  getCarePlan,
+  listCarePlans,
+  listProviderTasks,
+  suggestCarePlan,
+  updateCarePlanItem,
+  updateProviderTaskStatus
+} from './lib/care-plan.mjs';
+import { buildDialogueAnalysis, createDialogueTranscriptStore } from './lib/dialogue-transcripts.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +58,7 @@ const RUNTIME_PATH = path.join(__dirname, 'data/runtime/state.json');
 const INTAKE_DB_PATH = path.join(__dirname, 'data/intake/intakes.sqlite');
 const INTAKE_UPLOAD_DIR = path.join(__dirname, 'data/intake/uploads');
 const WHATSAPP_WEBHOOK_LOG_PATH = path.join(__dirname, 'data/intake/webhook-events.log');
+const DIALOGUE_DB_PATH = path.join(__dirname, 'data/encounters/dialogues.sqlite');
 
 function loadLocalEnv() {
   for (const envFile of ['.env.local', '.env']) {
@@ -146,6 +161,7 @@ async function loadPersistedRuntime() {
 }
 
 await loadPersistedRuntime();
+ensureCarePlanningRuntime(runtime);
 await fsp.writeFile(path.join(GENERATED_DIR, 'voice_lexicon.json'), JSON.stringify(runtime.voiceLexicon, null, 2), 'utf8');
 await persistRuntime();
 const intakeStore = createIntakeStore({
@@ -154,12 +170,13 @@ const intakeStore = createIntakeStore({
   whatsappBusinessNumber: process.env.WHATSAPP_BUSINESS_NUMBER || ''
 });
 intakeStore.upsertDoctors(runtime.providers);
+const dialogueTranscriptStore = createDialogueTranscriptStore({ dbPath: DIALOGUE_DB_PATH });
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type'
   });
   res.end(JSON.stringify(payload, null, 2));
@@ -169,7 +186,7 @@ function sendText(res, statusCode, payload, contentType = 'text/plain; charset=u
   res.writeHead(statusCode, {
     'Content-Type': contentType,
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type'
   });
   res.end(payload);
@@ -209,20 +226,15 @@ function normalizeWhatsAppRecipient(value) {
 
 function buildWhatsAppQuestionnaireMessage(doctor) {
   return [
-    doctor.qr_token,
+    'Начнем консультацию.',
+    `Код врача: ${doctor.qr_token}`,
     '',
-    'Анкета для врача. Ответьте одним сообщением, заполните строки после двоеточия:',
-    'ФИО пациента: ',
-    'ИИН: ',
-    'Телефон: ',
-    'Жалоба / что беспокоит: ',
-    'Когда началось: ',
-    'Где сильнее проявляется: ',
-    'Речь, внимание, обучение, игра: ',
-    'Сон, аппетит, тревожность, истерики: ',
-    'Что помогает: ',
-    'Красные флаги: судороги, резкое ухудшение, самоповреждение, опасное поведение? ',
-    'Фото/документы: можно отправить отдельным сообщением после этой анкеты.'
+    'Отправьте этот код ответом в WhatsApp. После этого бот задаст вопросы по одному:',
+    '1. ИИН пациента',
+    '2. ФИО пациента',
+    '3. телефон',
+    '4. жалоба и уточнения',
+    '5. фото или документы, если нужно'
   ].join('\n');
 }
 
@@ -390,6 +402,115 @@ function normalizePatientRecord(patient) {
 function normalizeRuntimePatients(targetRuntime) {
   if (!Array.isArray(targetRuntime?.patients)) return;
   targetRuntime.patients = targetRuntime.patients.map(normalizePatientRecord);
+}
+
+function ensureCarePlanningRuntime(targetRuntime) {
+  if (!targetRuntime || typeof targetRuntime !== 'object') return;
+  if (!targetRuntime.carePlans || typeof targetRuntime.carePlans !== 'object' || Array.isArray(targetRuntime.carePlans)) {
+    targetRuntime.carePlans = {};
+  }
+
+  const requiredProviders = [
+    {
+      provider_id: 'provider-4',
+      full_name: 'Мадина Абаева',
+      short_name: 'М. Абаева',
+      specialty: 'Терапевт',
+      schedule_name: 'Терапевт — кабинет 4',
+      care_role: 'therapist',
+      scheduler_busy_slots: []
+    },
+    {
+      provider_id: 'provider-5',
+      full_name: 'Ерлан Садыков',
+      short_name: 'Е. Садыков',
+      specialty: 'Массажист',
+      schedule_name: 'Массажист — кабинет 5',
+      care_role: 'massage',
+      scheduler_busy_slots: []
+    }
+  ];
+
+  targetRuntime.providers = Array.isArray(targetRuntime.providers) ? targetRuntime.providers : [];
+  for (const provider of targetRuntime.providers) {
+    if (provider.provider_id === 'provider-1' && !provider.care_role) provider.care_role = 'primary';
+    if (/психолог|psycholog/i.test(`${provider.specialty || ''} ${provider.schedule_name || ''}`) && !provider.care_role) {
+      provider.care_role = 'psychology';
+    }
+  }
+  for (const provider of requiredProviders) {
+    if (!targetRuntime.providers.some((item) => item.provider_id === provider.provider_id)) {
+      targetRuntime.providers.push(provider);
+    }
+  }
+
+  if (!Array.isArray(targetRuntime.scheduleDays) || !targetRuntime.scheduleDays.length) return;
+  targetRuntime.appointments = targetRuntime.appointments || {};
+  const boardHours = [...new Set(targetRuntime.scheduleDays.flatMap((day) => (day.slots || []).map((slot) => slot.start_time)))].sort();
+  const sampleAppointment = Object.values(targetRuntime.appointments)[0] || null;
+  targetRuntime.scheduleDays.forEach((day, dayIndex) => {
+    day.slots = Array.isArray(day.slots) ? day.slots : [];
+    requiredProviders.forEach((provider) => {
+      const providerHasSlots = day.slots.some((slot) => slot.provider_id === provider.provider_id);
+      if (providerHasSlots) return;
+      boardHours.forEach((startTime, hourIndex) => {
+        const [slotHour, slotMinute] = startTime.split(':').map(Number);
+        const endTotalMinutes = slotHour * 60 + slotMinute + 30;
+        const endTime = `${String(Math.floor(endTotalMinutes / 60)).padStart(2, '0')}:${String(endTotalMinutes % 60).padStart(2, '0')}`;
+        const slotId = `slot-${day.date}-${provider.provider_id}-${hourIndex + 1}`;
+        const appointmentId = `appointment-${dayIndex + 1}-${provider.provider_id}-${hourIndex + 1}`;
+        day.slots.push({
+          slot_id: slotId,
+          date: day.date,
+          start_time: startTime,
+          end_time: endTime,
+          provider_id: provider.provider_id,
+          status: 'available',
+          patient_id: null,
+          appointment_id: appointmentId,
+          triage: 'minor',
+          service_code: provider.care_role === 'massage' ? 'MASSAGE-001' : 'THERAPY-001',
+          service_name: provider.care_role === 'massage' ? 'Массаж / реабилитация' : 'Консультация терапевта'
+        });
+        if (!targetRuntime.appointments[appointmentId]) {
+          targetRuntime.appointments[appointmentId] = {
+            ...(sampleAppointment || {}),
+            appointment_id: appointmentId,
+            patient_id: null,
+            provider_id: provider.provider_id,
+            schedule_slot_id: slotId,
+            status: 'available',
+            service_code: provider.care_role === 'massage' ? 'MASSAGE-001' : 'THERAPY-001',
+            service_name: provider.care_role === 'massage' ? 'Массаж / реабилитация' : 'Консультация терапевта',
+            created_at: `${day.date}T${startTime}:00`,
+            executed_at: null,
+            provider_result_note: '',
+            inspection_draft: {
+              ...(sampleAppointment?.inspection_draft || {}),
+              appointment_id: appointmentId,
+              execute_date: day.date,
+              execute_time: startTime,
+              duration_min: 30,
+              specialist_name: provider.short_name || provider.full_name,
+              conclusion_text: '',
+              appointments_text: ''
+            },
+            draft_state: {
+              appointment_id: appointmentId,
+              draft_status: 'idle',
+              transcript_chunks: [],
+              fact_candidates: [],
+              draft_patches: [],
+              applied_patch_ids: [],
+              updated_at: null,
+              last_preview: null
+            },
+            readonly_tabs: sampleAppointment?.readonly_tabs || {}
+          };
+        }
+      });
+    });
+  });
 }
 
 function addAudit(entry) {
@@ -708,7 +829,7 @@ async function handleApi(req, res, url) {
     let instructionResult = null;
     let instructionError = null;
     const templateConfig = whatsappInviteTemplateConfig(doctor);
-    const questionnaire = buildWhatsAppQuestionnaireMessage(doctor);
+    const startMessage = buildWhatsAppQuestionnaireMessage(doctor);
     try {
       templateResult = await sendWhatsAppTemplate(
         to,
@@ -722,14 +843,14 @@ async function handleApi(req, res, url) {
         error: `Meta did not send the ${templateConfig.name} template. Check the access token, template name, language, and API Setup -> To recipient.`,
         details: error.message,
         manualToken: doctor.qr_token,
-        questionnaire
+        questionnaire: startMessage
       });
     }
 
     const instructionText = [
-      'Damumed Assistant: тестовая анкета WhatsApp.',
-      `Ответьте одним сообщением по анкете для врача ${doctor.display_name}:`,
-      questionnaire
+      'Damumed Assistant: WhatsApp intake.',
+      `Врач: ${doctor.display_name}.`,
+      startMessage
     ].join('\n');
     try {
       instructionResult = await sendWhatsAppMessage(to, instructionText);
@@ -746,7 +867,7 @@ async function handleApi(req, res, url) {
       instruction: instructionResult,
       instructionError,
       manualToken: doctor.qr_token,
-      questionnaire
+      questionnaire: startMessage
     });
   }
 
@@ -839,6 +960,176 @@ async function handleApi(req, res, url) {
     const date = url.searchParams.get('date') || runtime.currentDate;
     const statusFilter = url.searchParams.get('status') || 'all';
     return sendJson(res, 200, serializeSchedulePayload(date, statusFilter));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/care-plans') {
+    return sendJson(res, 200, {
+      ok: true,
+      carePlans: listCarePlans(runtime, {
+        patientId: url.searchParams.get('patientId') || '',
+        primaryProviderId: url.searchParams.get('primaryProviderId') || '',
+        status: url.searchParams.get('status') || ''
+      })
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/care-plans/suggest') {
+    const body = await readBody(req);
+    const plan = suggestCarePlan(runtime, {
+      patientId: body.patientId,
+      appointmentId: body.appointmentId,
+      planningWindowDays: body.planningWindowDays
+    });
+    addAudit(createAuditEntry({
+      actorType: 'ai',
+      actionType: 'suggest_care_plan',
+      screenId: 'care-plan',
+      entityRefs: { appointment_id: body.appointmentId, patient_id: plan.patient_id },
+      payload: { planningWindowDays: plan.planning_window_days },
+      result: `draft:${plan.items.length}`
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true, plan });
+  }
+
+  if (req.method === 'GET' && /^\/api\/care-plans\/[^/]+$/.test(url.pathname)) {
+    const planId = decodeURIComponent(url.pathname.split('/')[3]);
+    const plan = getCarePlan(runtime, planId);
+    if (!plan) return sendJson(res, 404, { ok: false, error: 'Care plan not found.' });
+    return sendJson(res, 200, { ok: true, plan });
+  }
+
+  if (req.method === 'PATCH' && /^\/api\/care-plans\/[^/]+\/items\/[^/]+$/.test(url.pathname)) {
+    const [, , , planId, , itemId] = url.pathname.split('/');
+    const body = await readBody(req);
+    const plan = updateCarePlanItem(runtime, decodeURIComponent(planId), decodeURIComponent(itemId), body);
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true, plan });
+  }
+
+  if (req.method === 'POST' && /^\/api\/care-plans\/[^/]+\/items$/.test(url.pathname)) {
+    const planId = decodeURIComponent(url.pathname.split('/')[3]);
+    const body = await readBody(req);
+    const plan = addCarePlanItem(runtime, planId, body);
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true, plan });
+  }
+
+  if (req.method === 'POST' && /^\/api\/care-plans\/[^/]+\/items\/[^/]+\/delete$/.test(url.pathname)) {
+    const [, , , planId, , itemId] = url.pathname.split('/');
+    const plan = deleteCarePlanItem(runtime, decodeURIComponent(planId), decodeURIComponent(itemId));
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true, plan });
+  }
+
+  if (req.method === 'POST' && /^\/api\/care-plans\/[^/]+\/confirm$/.test(url.pathname)) {
+    const planId = decodeURIComponent(url.pathname.split('/')[3]);
+    const result = confirmCarePlan(runtime, planId);
+    addAudit(createAuditEntry({
+      actorType: 'ui',
+      actionType: 'confirm_care_plan',
+      screenId: 'care-plan',
+      entityRefs: { care_plan_id: planId, patient_id: result.plan?.patient_id },
+      payload: { itemCount: result.plan?.items?.length || 0 },
+      result: result.ok ? 'confirmed' : `conflicts:${result.conflicts.length}`
+    }));
+    await persistRuntime();
+    return sendJson(res, result.ok ? 200 : 409, result);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/providers/tasks') {
+    const providerId = url.searchParams.get('providerId') || '';
+    return sendJson(res, 200, {
+      ok: true,
+      tasks: providerId ? listProviderTasks(runtime, providerId, { status: url.searchParams.get('status') || '' }) : []
+    });
+  }
+
+  if (req.method === 'GET' && /^\/api\/providers\/[^/]+\/tasks$/.test(url.pathname)) {
+    const providerId = decodeURIComponent(url.pathname.split('/')[3]);
+    return sendJson(res, 200, {
+      ok: true,
+      tasks: listProviderTasks(runtime, providerId, { status: url.searchParams.get('status') || '' })
+    });
+  }
+
+  if (req.method === 'POST' && /^\/api\/provider-tasks\/[^/]+\/status$/.test(url.pathname)) {
+    const taskId = decodeURIComponent(url.pathname.split('/')[3]);
+    const body = await readBody(req);
+    const result = updateProviderTaskStatus(runtime, taskId, {
+      status: body.status,
+      resultNote: body.resultNote
+    });
+    addAudit(createAuditEntry({
+      actorType: 'ui',
+      actionType: 'update_provider_task_status',
+      screenId: 'care-plan',
+      entityRefs: { task_id: taskId, care_plan_id: result.plan?.plan_id },
+      payload: { status: body.status, resultNote: body.resultNote || '' },
+      result: result.task?.status || body.status
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, result);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/schedule/conflicts') {
+    const planId = url.searchParams.get('planId') || '';
+    const plan = planId ? getCarePlan(runtime, planId) : null;
+    const items = plan?.items || [{
+      item_id: 'query',
+      provider_id: url.searchParams.get('providerId') || '',
+      date: url.searchParams.get('date') || '',
+      start_time: url.searchParams.get('start') || '',
+      end_time: url.searchParams.get('end') || ''
+    }];
+    return sendJson(res, 200, { ok: true, conflicts: findScheduleConflicts(runtime, { items, planId }) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/dialogue-transcripts') {
+    const body = await readBody(req);
+    const appointment = body.appointmentId ? runtime.appointments?.[body.appointmentId] : null;
+    const patientId = body.patientId || appointment?.patient_id || '';
+    const analysis = buildDialogueAnalysis(body.transcript || '');
+    const transcript = dialogueTranscriptStore.saveTranscript({
+      appointmentId: body.appointmentId || '',
+      patientId,
+      source: body.source || 'extension',
+      durationSec: body.durationSec || 0,
+      transcript: body.transcript || '',
+      analysis
+    });
+    if (appointment?.draft_state && transcript.transcript_text) {
+      appointment.draft_state.transcript_chunks = [
+        ...(appointment.draft_state.transcript_chunks || []),
+        {
+          id: `dialogue-${transcript.transcript_id}`,
+          text: transcript.transcript_text,
+          speakerTag: 'dialogue',
+          created_at: transcript.created_at
+        }
+      ];
+      appointment.draft_state.updated_at = transcript.created_at;
+    }
+    addAudit(createAuditEntry({
+      actorType: 'speech',
+      actionType: 'save_dialogue_transcript',
+      screenId: 'inspection',
+      entityRefs: { appointment_id: body.appointmentId || '', patient_id: patientId },
+      payload: { durationSec: body.durationSec || 0, source: body.source || 'extension' },
+      result: 'saved_text_only'
+    }));
+    await persistRuntime();
+    return sendJson(res, 200, { ok: true, transcript });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/dialogue-transcripts') {
+    return sendJson(res, 200, {
+      ok: true,
+      transcripts: dialogueTranscriptStore.listTranscripts({
+        appointmentId: url.searchParams.get('appointmentId') || '',
+        patientId: url.searchParams.get('patientId') || ''
+      })
+    });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/current-date') {
@@ -1326,30 +1617,27 @@ async function handleApi(req, res, url) {
     }));
 
     // Module 3: Smart Scheduling — auto-generate 9-working-day schedule after primary visit
-    let autoScheduleResult = null;
+    let carePlanResult = null;
     if (wasPrimaryVisit && updated.patient_id) {
       try {
-        const patient = getPatientById(runtime, updated.patient_id) || getSchedulerPatientById(runtime, updated.patient_id);
-        if (patient) {
-          const durationMin = [30, 40].includes(Number(body.duration_min)) ? Number(body.duration_min) : 30;
-          const generated = generatePsychologistSchedule({
-            patient,
-            psychologists: buildSchedulingPsychologists(runtime),
-            startDate: body.execute_date || runtime.currentDate,
-            durationMin
-          });
-          autoScheduleResult = applyGeneratedScheduleToRuntime(generated, patient.patient_id);
-          addAudit(createAuditEntry({
-            actorType: 'ai',
-            actionType: 'auto_generate_psychologist_schedule',
-            screenId: 'inspection',
-            entityRefs: { appointment_id: appointmentId, patient_id: patient.patient_id },
-            payload: { sessionCount: 9, durationMin, startDate: body.execute_date || runtime.currentDate, trigger: 'primary_visit_save' },
-            result: `applied:${autoScheduleResult.applied.length}`
-          }));
-        }
-      } catch (scheduleError) {
-        autoScheduleResult = { error: scheduleError.message || 'Auto-schedule generation failed' };
+        carePlanResult = suggestCarePlan(runtime, {
+          patientId: updated.patient_id,
+          appointmentId,
+          planningWindowDays: body.planningWindowDays || 9
+        });
+        addAudit(createAuditEntry({
+          actorType: 'ai',
+          actionType: 'draft_care_plan_after_primary_visit',
+          screenId: 'inspection',
+          entityRefs: { appointment_id: appointmentId, patient_id: updated.patient_id },
+          payload: {
+            planningWindowDays: carePlanResult.planning_window_days,
+            trigger: 'primary_visit_save'
+          },
+          result: `draft:${carePlanResult.items.length}`
+        }));
+      } catch (carePlanError) {
+        carePlanResult = { error: carePlanError.message || 'Care plan generation failed' };
       }
     }
 
@@ -1357,8 +1645,8 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, {
       appointment: updated,
       patient: getPatientById(runtime, updated.patient_id),
-      autoSchedule: autoScheduleResult,
-      scheduleWindow: autoScheduleResult && !autoScheduleResult.error
+      carePlan: carePlanResult,
+      scheduleWindow: carePlanResult && !carePlanResult.error
         ? serializeScheduleWindow(runtime.currentDate)
         : undefined
     });
@@ -1593,7 +1881,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+        'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
       });
       return res.end();

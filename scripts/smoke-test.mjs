@@ -9,6 +9,13 @@ import { normalizeTranscript as normalizeCanonicalTranscript } from '../lib/tran
 import { createIntakeStore } from '../lib/intake-db.mjs';
 import { handleWhatsAppWebhook, verifyWhatsAppWebhook } from '../lib/whatsapp-cloud.mjs';
 import {
+  confirmCarePlan,
+  listProviderTasks,
+  suggestCarePlan,
+  updateProviderTaskStatus
+} from '../lib/care-plan.mjs';
+import { createDialogueTranscriptStore } from '../lib/dialogue-transcripts.mjs';
+import {
   buildProcedureSchedulePreview,
   getDeepgramRealtimeConfig,
   inferPatapimSpeakerRole,
@@ -94,6 +101,54 @@ assert.deepEqual(
   [...new Set(runtime.scheduleDays[0].slots.map((slot) => slot.provider_id))].sort(),
   runtime.providers.map((provider) => provider.provider_id).sort()
 );
+
+const careRuntime = seedRuntimeState(artifacts);
+const primaryAppointmentId = Object.values(careRuntime.appointments).find((appointment) => appointment.status === 'scheduled' && appointment.patient_id)?.appointment_id;
+const primaryAppointment = careRuntime.appointments[primaryAppointmentId];
+const carePlan7 = suggestCarePlan(careRuntime, {
+  patientId: primaryAppointment.patient_id,
+  appointmentId: primaryAppointmentId,
+  planningWindowDays: 7
+});
+assert.equal(carePlan7.planning_window_days, 7);
+assert.ok(carePlan7.items.length >= 2);
+assert.ok(carePlan7.items.every((item) => item.date >= carePlan7.window_start_date && item.date <= carePlan7.window_end_date));
+assert.equal(carePlan7.conflicts.length, 0);
+const carePlan9 = suggestCarePlan(careRuntime, {
+  patientId: primaryAppointment.patient_id,
+  appointmentId: primaryAppointmentId,
+  planningWindowDays: 9
+});
+assert.equal(carePlan9.planning_window_days, 9);
+assert.ok(carePlan9.items.every((item) => item.date >= carePlan9.window_start_date && item.date <= carePlan9.window_end_date));
+const confirmedCarePlan = confirmCarePlan(careRuntime, carePlan9.plan_id);
+assert.equal(confirmedCarePlan.ok, true);
+const secondaryTask = confirmedCarePlan.plan.items.find((item) => item.provider_kind !== 'primary');
+assert.ok(secondaryTask);
+const providerTasks = listProviderTasks(careRuntime, secondaryTask.provider_id);
+assert.ok(providerTasks.some((task) => task.item_id === secondaryTask.item_id));
+const taskUpdate = updateProviderTaskStatus(careRuntime, secondaryTask.item_id, {
+  status: 'completed',
+  resultNote: 'Занятие выполнено, переносимость спокойная.'
+});
+assert.equal(taskUpdate.task.status, 'completed');
+assert.equal(taskUpdate.plan.items.find((item) => item.item_id === secondaryTask.item_id).result_note, 'Занятие выполнено, переносимость спокойная.');
+
+const dialogueTempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'damumed-dialogue-'));
+const dialogueStore = createDialogueTranscriptStore({ dbPath: path.join(dialogueTempDir, 'dialogues.sqlite') });
+const dialogueTranscript = dialogueStore.saveTranscript({
+  appointmentId: primaryAppointmentId,
+  patientId: primaryAppointment.patient_id,
+  transcript: 'Доктор и родитель обсудили усталость ребенка, внимание, сон и переносимость нагрузки.',
+  durationSec: 900
+});
+assert.ok(dialogueTranscript.transcript_text.includes('усталость'));
+assert.equal(dialogueTranscript.duration_sec, 900);
+assert.ok(dialogueTranscript.analysis.summary);
+assert.ok(Array.isArray(dialogueTranscript.analysis.care_plan_updates));
+assert.equal(Object.prototype.hasOwnProperty.call(dialogueTranscript, 'audio_path'), false);
+dialogueStore.close();
+await fs.rm(dialogueTempDir, { recursive: true, force: true });
 
 const advisorAppointmentId = Object.keys(runtime.appointments)[0];
 const normalizedIngest = await ingestTranscript(runtime, {
@@ -302,8 +357,8 @@ await handleWhatsAppWebhook({
         value: {
           contacts: [{ wa_id: '770700000001', profile: { name: 'Parent One' } }],
           messages: [
-            { from: '770700000001', text: { body: 'Иванов Иван Иванович' } },
             { from: '770700000001', text: { body: '123456789012' } },
+            { from: '770700000001', text: { body: 'Иванов Иван Иванович' } },
             { from: '770700000001', text: { body: '+770700000001' } },
             { from: '770700000001', text: { body: 'Ребенок быстро устает и плохо удерживает внимание.' } },
             { from: '770700000001', text: { body: 'Около трех месяцев назад это стало заметнее.' } },
